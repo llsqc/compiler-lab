@@ -55,6 +55,9 @@ public:
 	void analyze();
 
 private:
+	// 是否在字符串内
+	bool inString = false;
+
 	// 跳过空白符
 	void skipBlank();
 
@@ -141,21 +144,46 @@ Token Lexer::scanNumber()
 
 Token Lexer::scanString()
 {
-	// 当前字符一定是 "
-	get();					// 跳过第一个 "
-	return Token("\"", 78); // 注意：字符串拆成三部分由外层处理
+	string lex;
+	while (!isEnd() && peek() != '"')
+	{
+		lex += get();
+	}
+	return Token(lex, 81);
 }
 
 Token Lexer::scanComment()
 {
 	string lex;
 	lex += get(); // '/'
-	lex += get(); // '/'
 
-	while (!isEnd() && peek() != '\n')
+	// 判断是 // 还是 /*
+	char next = get();
+	lex += next;
+
+	// 单行注释 //
+	if (next == '/')
 	{
-		lex += get();
+		while (!isEnd() && peek() != '\n')
+		{
+			lex += get();
+		}
 	}
+	// 多行注释 /* ... */
+	else if (next == '*')
+	{
+		while (!isEnd())
+		{
+			char ch = get();
+			lex += ch;
+			if (ch == '*' && !isEnd() && peek() == '/')
+			{
+				lex += get();
+				break;
+			}
+		}
+	}
+
 	return Token(lex, 79);
 }
 
@@ -195,10 +223,29 @@ Token Lexer::nextToken()
 
 	if (isalpha(ch) || ch == '_')
 		return scanIdentifier();
+
 	if (isdigit(ch))
 		return scanNumber();
+
 	if (ch == '"')
-		return scanString();
+	{
+		get();
+		inString = !inString; // 切换字符串状态
+		return Token("\"", 78);
+	}
+
+	if (inString)
+	{
+		Token t = scanString();
+		if (!t.lexeme.empty())
+			return t;
+
+		// 如果内容为空，说明紧接着就是结束引号
+		get();
+		inString = false;
+		return Token("\"", 78);
+	}
+
 	if (ch == '/' && pos + 1 < length)
 	{
 		if (prog[pos + 1] == '/' || prog[pos + 1] == '*')
