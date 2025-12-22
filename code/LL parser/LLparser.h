@@ -118,8 +118,8 @@ public:
 private:
     const Grammar &grammar;
 
-    map<Symbol, set<Symbol>> first;
-    map<Symbol, set<Symbol>> follow;
+    map<Symbol, set<Symbol>> firstSet;
+    map<Symbol, set<Symbol>> followSet;
 
     bool addToFirst(const Symbol &s, const Symbol &x);
     bool addToFollow(const Symbol &s, const Symbol &x);
@@ -178,7 +178,7 @@ bool Symbol::operator==(const Symbol &other) const
 
 bool Symbol::operator!=(const Symbol &other) const
 {
-    return name != other.name && type != other.type;
+    return !(*this == other);
 }
 
 bool Symbol::operator<(const Symbol &other) const
@@ -279,32 +279,32 @@ FirstFollowCalculator::FirstFollowCalculator(const Grammar &g) : grammar(g)
     // 初始化 FIRST / FOLLOW 表
     for (const Symbol &nt : grammar.getNonTerminals())
     {
-        first[nt] = set<Symbol>();
-        follow[nt] = set<Symbol>();
+        firstSet[nt] = set<Symbol>();
+        followSet[nt] = set<Symbol>();
     }
 
     // 终结符的 FIRST 是它自己
     for (const Symbol &t : grammar.getTerminals())
     {
-        first[t].insert(t);
+        firstSet[t].insert(t);
     }
+
+    firstSet[END_MARK].insert(END_MARK);
 }
 
 const set<Symbol> &FirstFollowCalculator::getFirst(const Symbol &s) const
 {
-    static set<Symbol> empty;
-    auto it = first.find(s);
-    if (it == first.end())
-        return empty;
+    auto it = firstSet.find(s);
+    if (it == firstSet.end())
+        throw logic_error("FIRST not initialized");
     return it->second;
 }
 
 const set<Symbol> &FirstFollowCalculator::getFollow(const Symbol &s) const
 {
-    static set<Symbol> empty;
-    auto it = follow.find(s);
-    if (it == follow.end())
-        return empty;
+    auto it = followSet.find(s);
+    if (it == followSet.end())
+        throw logic_error("Follow not initialized");
     return it->second;
 }
 
@@ -350,9 +350,6 @@ void FirstFollowCalculator::computeFirst()
 {
     bool changed = true;
 
-    // EPSILON 的 FIRST 是它自己
-    first[EPSILON].insert(EPSILON);
-
     while (changed)
     {
         changed = false;
@@ -370,7 +367,7 @@ void FirstFollowCalculator::computeFirst()
                 {
                     if (s != EPSILON)
                     {
-                        if (first[A].insert(s).second)
+                        if (firstSet[A].insert(s).second)
                             changed = true;
                     }
                 }
@@ -384,7 +381,7 @@ void FirstFollowCalculator::computeFirst()
 
             if (allNullable)
             {
-                if (first[A].insert(EPSILON).second)
+                if (firstSet[A].insert(EPSILON).second)
                     changed = true;
             }
         }
@@ -394,7 +391,7 @@ void FirstFollowCalculator::computeFirst()
 void FirstFollowCalculator::computeFollow()
 {
     // 起始符加 $
-    follow[grammar.getStartSymbol()].insert(END_MARK);
+    followSet[grammar.getStartSymbol()].insert(END_MARK);
 
     bool changed = true;
     while (changed)
@@ -424,7 +421,7 @@ void FirstFollowCalculator::computeFollow()
                 {
                     if (s != EPSILON)
                     {
-                        if (follow[B].insert(s).second)
+                        if (followSet[B].insert(s).second)
                             changed = true;
                     }
                 }
@@ -432,9 +429,9 @@ void FirstFollowCalculator::computeFollow()
                 // β ⇒* ε
                 if (beta.empty() || firstBeta.count(EPSILON))
                 {
-                    for (const Symbol &s : follow[A])
+                    for (const Symbol &s : followSet[A])
                     {
-                        if (follow[B].insert(s).second)
+                        if (followSet[B].insert(s).second)
                             changed = true;
                     }
                 }
