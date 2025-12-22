@@ -135,6 +135,7 @@ public:
     void build(const Grammar &g, const FirstFollowCalculator &ff);
 
     bool hasEntry(const Symbol &nonTerminal, const Symbol &terminal) const;
+
     const Production &getEntry(const Symbol &nonTerminal, const Symbol &terminal) const;
 
     bool hasConflict() const;
@@ -161,8 +162,7 @@ private:
 
     void reportError(int line, const string &msg);
 
-    void synchronize(const Symbol &nonTerminal, const vector<Symbol> &input,
-                     size_t &pos);
+    void synchronize(const Symbol &nonTerminal, const vector<Symbol> &input, size_t &pos);
 };
 
 // ========= 实现 =========
@@ -438,6 +438,83 @@ void FirstFollowCalculator::computeFollow()
             }
         }
     }
+}
+
+// ========= 实现 =========
+
+LL1Table::LL1Table() : conflict(false) {}
+
+void LL1Table::build(const Grammar &g, const FirstFollowCalculator &ff)
+{
+    conflict = false;
+    table.clear();
+
+    for (const Production &p : g.getProductions())
+    {
+        const Symbol &A = p.left;
+        const vector<Symbol> &alpha = p.right;
+
+        // FIRST(α)
+        set<Symbol> firstAlpha = ff.firstOfSequence(alpha);
+
+        // 情况 1：a ∈ FIRST(α) - {ε}
+        for (const Symbol &a : firstAlpha)
+        {
+            if (a.type == SymbolType::EPSILON)
+                continue;
+
+            pair<Symbol, Symbol> key = {A, a};
+
+            if (table.count(key))
+            {
+                conflict = true;
+            }
+            else
+            {
+                table[key] = p;
+            }
+        }
+
+        // 情况 2：ε ∈ FIRST(α)
+        if (firstAlpha.count(EPSILON))
+        {
+            const set<Symbol> &followA = ff.getFollow(A);
+
+            for (const Symbol &b : followA)
+            {
+                pair<Symbol, Symbol> key = {A, b};
+
+                if (table.count(key))
+                {
+                    conflict = true;
+                }
+                else
+                {
+                    table[key] = p;
+                }
+            }
+        }
+    }
+}
+
+bool LL1Table::hasEntry(const Symbol &nonTerminal, const Symbol &terminal) const
+{
+    return table.count({nonTerminal, terminal}) > 0;
+}
+
+const Production &LL1Table::getEntry(const Symbol &nonTerminal, const Symbol &terminal) const
+{
+    auto it = table.find({nonTerminal, terminal});
+    if (it == table.end())
+    {
+        throw runtime_error("LL(1) table entry not found");
+    }
+    return it->second;
+}
+
+bool LL1Table::hasConflict() const
+{
+    return conflict;
 }
 
 void Analysis()
