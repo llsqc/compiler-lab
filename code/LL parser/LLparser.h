@@ -145,26 +145,6 @@ private:
     bool conflict;
 };
 
-// ========= LL1Parser =========
-
-class LL1Parser
-{
-public:
-    LL1Parser(const Grammar &g, const LL1Table &table);
-
-    void parse(const vector<Symbol> &input);
-
-private:
-    const Grammar &grammar;
-    const LL1Table &ll1Table;
-
-    stack<Symbol> parseStack;
-
-    void reportError(int line, const string &msg);
-
-    void synchronize(const Symbol &nonTerminal, const vector<Symbol> &input, size_t &pos);
-};
-
 // ========= GrammarBuilder =========
 
 class GrammarBuilder
@@ -238,6 +218,28 @@ private:
     ParseTreeNode *root;
 
     void printNode(ParseTreeNode *node, int indent) const;
+};
+
+// ========= LL1Parser =========
+
+class LL1Parser
+{
+public:
+    LL1Parser(const Grammar &g, const LL1Table &table);
+
+    void parse(const vector<Symbol> &input);
+
+private:
+    const Grammar &grammar;
+    const LL1Table &ll1Table;
+
+    ParseTree *parseTree;             // 最终生成的语法树
+    stack<ParseTreeNode *> nodeStack; // 结点栈（与符号栈同步）
+    stack<Symbol> parseStack;
+
+    void reportError(int line, const string &msg);
+
+    void synchronize(const Symbol &nonTerminal, const vector<Symbol> &input, size_t &pos);
 };
 
 // ========= 实现 =========
@@ -623,10 +625,16 @@ void LL1Parser::synchronize(const Symbol &nonTerminal, const vector<Symbol> &inp
 void LL1Parser::parse(const vector<Symbol> &input)
 {
     parseStack = stack<Symbol>();
+    nodeStack = stack<ParseTreeNode *>();
 
-    // 初始化分析栈
+    // 1. 初始化符号栈
     parseStack.push(END_MARK);
     parseStack.push(grammar.getStartSymbol());
+
+    // 2. 初始化语法树
+    ParseTreeNode *root = new ParseTreeNode(grammar.getStartSymbol());
+    nodeStack.push(root);
+    parseTree = new ParseTree(root);
 
     size_t pos = 0;
 
@@ -639,38 +647,65 @@ void LL1Parser::parse(const vector<Symbol> &input)
         Symbol X = parseStack.top();
         Symbol a = tokens[pos];
 
-        // 1️⃣ 栈顶是终结符 或 $
+        /* ========= 1 栈顶是终结符 或 $ ========= */
         if (X.type == SymbolType::TERMINAL || X.type == SymbolType::END)
         {
             if (X == a)
             {
                 parseStack.pop();
+                nodeStack.pop(); // 同步弹出结点
                 pos++;
             }
             else
             {
                 reportError(0, "缺少 \"" + X.name + "\"");
-                parseStack.pop(); // 弹出栈顶，试图继续
+                parseStack.pop();
+                nodeStack.pop(); // 保持同步
             }
         }
-        // 2️⃣ 栈顶是 ε
+
+        /* ========= 2 栈顶是 ε ========= */
         else if (X.type == SymbolType::EPSILON)
         {
-            parseStack.pop(); // ε 直接弹出
+            parseStack.pop();
         }
-        // 3️⃣ 栈顶是非终结符
+
+        /* ========= 3 栈顶是非终结符 ========= */
         else if (X.type == SymbolType::NON_TERMINAL)
         {
             if (ll1Table.hasEntry(X, a))
             {
                 const Production &p = ll1Table.getEntry(X, a);
+
                 parseStack.pop();
+                ParseTreeNode *parent = nodeStack.top(); // 当前展开的结点
+
+                // 保存子结点
+                vector<ParseTreeNode *> children;
 
                 // 逆序压入产生式右部
                 for (auto it = p.right.rbegin(); it != p.right.rend(); ++it)
                 {
                     if (it->type != SymbolType::EPSILON)
+                    {
                         parseStack.push(*it);
+
+                        ParseTreeNode *child = new ParseTreeNode(*it);
+                        nodeStack.push(child);
+                        children.push_back(child);
+                    }
+                    else
+                    {
+                        // ε 作为语法树结点
+                        ParseTreeNode *epsNode = new ParseTreeNode(EPSILON);
+                        parent->addChild(epsNode);
+                    }
+                }
+
+                // children 是逆序的，挂回 parent 要再反一次
+                for (auto it = children.rbegin(); it != children.rend(); ++it)
+                {
+                    parent->addChild(*it);
                 }
             }
             else
@@ -682,7 +717,6 @@ void LL1Parser::parse(const vector<Symbol> &input)
         }
         else
         {
-            // 理论上不会到这里
             parseStack.pop();
         }
     }
@@ -691,14 +725,30 @@ void LL1Parser::parse(const vector<Symbol> &input)
     {
         reportError(0, "输入未完全匹配");
     }
+
+    cout << "Parse finished.\n";
+    parseTree->print(); // 输出语法树
 }
 
 GrammarBuilder::GrammarBuilder(Grammar &g) : grammar(g)
 {
-    // 预注册 ε 和 $
+    // 已有预注册 ε 和 $
     symbolTable["ε"] = EPSILON;
     symbolTable["E"] = EPSILON;
     symbolTable["$"] = END_MARK;
+
+    // 预注册保留字和操作符为终结符
+    vector<string> terminals = {
+        "if", "then", "else", "while",
+        "ID", "NUM",
+        "{", "}", "(", ")", ";",
+        "+", "-", "*", "/",
+        "=", "<", "<=", "==", ">", ">="};
+
+    for (const string &t : terminals)
+    {
+        symbolTable[t] = Symbol(t, SymbolType::TERMINAL);
+    }
 }
 
 void GrammarBuilder::loadFromText(const string &text)
@@ -749,19 +799,16 @@ void GrammarBuilder::parseLine(const string &line)
                 if (tok.empty())
                     continue;
 
-                if (tok == "ε" || tok == "E")
+                // 优先查 symbolTable
+                auto it = symbolTable.find(tok);
+                if (it != symbolTable.end())
                 {
-                    right.push_back(EPSILON);
+                    right.push_back(it->second);
                 }
                 else
                 {
-                    SymbolType type;
-                    if (isupper(tok[0]) || !isalpha(tok[0]))
-                        type = SymbolType::TERMINAL;
-                    else
-                        type = SymbolType::NON_TERMINAL;
-
-                    right.push_back(getOrCreateSymbol(tok, type));
+                    // 没有注册的 token 当作非终结符
+                    right.push_back(getOrCreateSymbol(tok, SymbolType::NON_TERMINAL));
                 }
             }
         }
