@@ -517,12 +517,151 @@ bool LL1Table::hasConflict() const
     return conflict;
 }
 
+LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table) : grammar(g), ll1Table(table)
+{
+}
+
+void LL1Parser::reportError(int line, const string &msg)
+{
+    cout << "语法错误,第" << line << "行," << msg << endl;
+}
+
+void LL1Parser::synchronize(const Symbol &nonTerminal, const vector<Symbol> &input, size_t &pos)
+{
+    // 跳过输入符号，直到：
+    // 1) 遇到 FOLLOW(nonTerminal) 中的符号
+    // 2) 或遇到输入结束
+
+    // 这里假设 FOLLOW 集已经在表构造阶段间接使用过
+    while (pos < input.size())
+    {
+        // 如果表中存在 (nonTerminal, 当前输入)，可以继续分析
+        if (ll1Table.hasEntry(nonTerminal, input[pos]))
+            return;
+
+        pos++; // 丢弃一个输入符号
+    }
+}
+
+void LL1Parser::parse(const vector<Symbol> &input)
+{
+    parseStack = stack<Symbol>();
+
+    // 初始化分析栈
+    parseStack.push(END_MARK);
+    parseStack.push(grammar.getStartSymbol());
+
+    size_t pos = 0;
+
+    // 输入末尾补 $
+    vector<Symbol> tokens = input;
+    tokens.push_back(END_MARK);
+
+    while (!parseStack.empty())
+    {
+        Symbol X = parseStack.top();
+        Symbol a = tokens[pos];
+
+        // 1️⃣ 栈顶是终结符 或 $
+        if (X.type == SymbolType::TERMINAL || X.type == SymbolType::END)
+        {
+            if (X == a)
+            {
+                parseStack.pop();
+                pos++;
+            }
+            else
+            {
+                reportError(0, "缺少 \"" + X.name + "\"");
+                parseStack.pop(); // 弹出栈顶，试图继续
+            }
+        }
+        // 2️⃣ 栈顶是 ε
+        else if (X.type == SymbolType::EPSILON)
+        {
+            parseStack.pop(); // ε 直接弹出
+        }
+        // 3️⃣ 栈顶是非终结符
+        else if (X.type == SymbolType::NON_TERMINAL)
+        {
+            if (ll1Table.hasEntry(X, a))
+            {
+                const Production &p = ll1Table.getEntry(X, a);
+                parseStack.pop();
+
+                // 逆序压入产生式右部
+                for (auto it = p.right.rbegin(); it != p.right.rend(); ++it)
+                {
+                    if (it->type != SymbolType::EPSILON)
+                        parseStack.push(*it);
+                }
+            }
+            else
+            {
+                reportError(0, "非法符号 \"" + a.name + "\"");
+                parseStack.pop();
+                synchronize(X, tokens, pos);
+            }
+        }
+        else
+        {
+            // 理论上不会到这里
+            parseStack.pop();
+        }
+    }
+
+    if (pos < tokens.size() - 1)
+    {
+        reportError(0, "输入未完全匹配");
+    }
+}
+
 void Analysis()
 {
-    string prog;
-    read_prog(prog);
-    /* 骚年们 请开始你们的表演 */
     /********* Begin *********/
+
+    // ---------- 1. 定义符号 ----------
+    Symbol Program("Program", SymbolType::NON_TERMINAL);
+    Symbol Stmt("Stmt", SymbolType::NON_TERMINAL);
+
+    Symbol ID("ID", SymbolType::TERMINAL);
+    Symbol ASSIGN("=", SymbolType::TERMINAL);
+    Symbol NUM("NUM", SymbolType::TERMINAL);
+    Symbol SEMI(";", SymbolType::TERMINAL);
+
+    // ---------- 2. 构建文法 ----------
+    Grammar grammar(Program);
+
+    // Program → Stmt
+    grammar.addProduction(Program, {Stmt});
+
+    // Stmt → ID = NUM ;
+    grammar.addProduction(Stmt, {ID, ASSIGN, NUM, SEMI});
+
+    // ---------- 3. FIRST / FOLLOW ----------
+    FirstFollowCalculator ff(grammar);
+    ff.computeFirst();
+    ff.computeFollow();
+
+    // ---------- 4. 构建 LL(1) 表 ----------
+    LL1Table table;
+    table.build(grammar, ff);
+
+    if (table.hasConflict())
+    {
+        cout << "该文法不是 LL(1) 文法" << endl;
+        return;
+    }
+
+    // ---------- 5. 构造输入 ----------
+    vector<Symbol> input = {
+        ID, ASSIGN, NUM, SEMI};
+
+    // ---------- 6. 预测分析 ----------
+    LL1Parser parser(grammar, table);
+    parser.parse(input);
+
+    cout << "分析成功" << endl;
 
     /********* End *********/
 }
