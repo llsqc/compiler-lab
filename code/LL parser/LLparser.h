@@ -620,44 +620,73 @@ void Analysis()
 {
     /********* Begin *********/
 
-    // ---------- 1. 定义符号 ----------
-    Symbol Program("Program", SymbolType::NON_TERMINAL);
-    Symbol Stmt("Stmt", SymbolType::NON_TERMINAL);
+    // ---------- 1. 定义非终结符 ----------
+    Symbol program("program", SymbolType::NON_TERMINAL);
+    Symbol stmt("stmt", SymbolType::NON_TERMINAL);
+    Symbol compoundstmt("compoundstmt", SymbolType::NON_TERMINAL);
+    Symbol stmts("stmts", SymbolType::NON_TERMINAL);
+    Symbol assgstmt("assgstmt", SymbolType::NON_TERMINAL);
 
+    Symbol arithexpr("arithexpr", SymbolType::NON_TERMINAL);
+    Symbol arithexprprime("arithexprprime", SymbolType::NON_TERMINAL);
+    Symbol multexpr("multexpr", SymbolType::NON_TERMINAL);
+    Symbol multexprprime("multexprprime", SymbolType::NON_TERMINAL);
+    Symbol simpleexpr("simpleexpr", SymbolType::NON_TERMINAL);
+
+    // ---------- 2. 定义终结符 ----------
+    Symbol LBRACE("{", SymbolType::TERMINAL);
+    Symbol RBRACE("}", SymbolType::TERMINAL);
     Symbol ID("ID", SymbolType::TERMINAL);
     Symbol ASSIGN("=", SymbolType::TERMINAL);
     Symbol NUM("NUM", SymbolType::TERMINAL);
     Symbol SEMI(";", SymbolType::TERMINAL);
 
-    // ---------- 2. 构建文法 ----------
-    Grammar grammar(Program);
+    // ---------- 3. 构建文法 ----------
+    Grammar grammar(program);
 
-    // Program → Stmt
-    grammar.addProduction(Program, {Stmt});
+    grammar.addProduction(program, {compoundstmt});
 
-    // Stmt → ID = NUM ;
-    grammar.addProduction(Stmt, {ID, ASSIGN, NUM, SEMI});
+    grammar.addProduction(compoundstmt, {LBRACE, stmts, RBRACE});
 
-    // ---------- 3. FIRST / FOLLOW ----------
+    grammar.addProduction(stmts, {stmt, stmts});
+    grammar.addProduction(stmts, {}); // ε
+
+    grammar.addProduction(stmt, {assgstmt});
+    grammar.addProduction(stmt, {compoundstmt});
+
+    grammar.addProduction(assgstmt, {ID, ASSIGN, arithexpr, SEMI});
+
+    grammar.addProduction(arithexpr, {multexpr, arithexprprime});
+    grammar.addProduction(arithexprprime, {}); // ε
+
+    grammar.addProduction(multexpr, {simpleexpr, multexprprime});
+    grammar.addProduction(multexprprime, {}); // ε
+
+    grammar.addProduction(simpleexpr, {ID});
+    grammar.addProduction(simpleexpr, {NUM});
+
+    // ---------- 4. FIRST / FOLLOW ----------
     FirstFollowCalculator ff(grammar);
     ff.computeFirst();
     ff.computeFollow();
 
-    // ---------- 4. 构建 LL(1) 表 ----------
+    // ---------- 5. LL(1) 表 ----------
     LL1Table table;
     table.build(grammar, ff);
 
     if (table.hasConflict())
     {
-        cout << "该文法不是 LL(1) 文法" << endl;
+        cout << "该文法不是 LL(1)" << endl;
         return;
     }
 
-    // ---------- 5. 构造输入 ----------
+    // ---------- 6. 构造输入 ----------
     vector<Symbol> input = {
-        ID, ASSIGN, NUM, SEMI};
+        LBRACE,
+        ID, ASSIGN, NUM, SEMI,
+        RBRACE};
 
-    // ---------- 6. 预测分析 ----------
+    // ---------- 7. 预测分析 ----------
     LL1Parser parser(grammar, table);
     parser.parse(input);
 
