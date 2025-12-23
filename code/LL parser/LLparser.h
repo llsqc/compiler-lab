@@ -10,6 +10,8 @@
 #include <set>
 #include <stack>
 using namespace std;
+#define DEBUG
+#undef DEBUG
 /* 不要修改这个标准输入函数 */
 void read_prog(string &prog)
 {
@@ -225,20 +227,20 @@ class LL1Parser
 public:
     LL1Parser(const Grammar &g, const LL1Table &table);
 
-    void parse(const std::vector<Symbol> &input);
+    void parse(const vector<Symbol> &input);
 
 private:
     const Grammar &grammar;
     const LL1Table &ll1Table;
 
-    std::vector<Symbol> tokens;
+    vector<Symbol> tokens;
     size_t pos;
 
     ParseTree *parseTree;
 
     ParseTreeNode *parseSymbol(const Symbol &X);
 
-    void reportError(int line, const std::string &msg);
+    void reportError(int line, const string &msg);
 };
 
 // ========= 实现 =========
@@ -602,13 +604,15 @@ LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table)
 {
 }
 
-void LL1Parser::parse(const std::vector<Symbol> &input)
+void LL1Parser::parse(const vector<Symbol> &input)
 {
     tokens = input;
     tokens.push_back(END_MARK);
     pos = 0;
 
-    std::cout << "=== 开始解析 ===\n";
+#ifdef DEBUG
+    cout << "=== 开始解析 ===\n";
+#endif
 
     ParseTreeNode *root = parseSymbol(grammar.getStartSymbol());
     parseTree = new ParseTree(root);
@@ -618,7 +622,9 @@ void LL1Parser::parse(const std::vector<Symbol> &input)
         reportError(0, "输入未完全匹配");
     }
 
-    std::cout << "=== 解析结束 ===\n";
+#ifdef DEBUG
+    cout << "=== 解析结束 ===\n";
+#endif
     parseTree->print();
 }
 
@@ -632,7 +638,9 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
     {
         if (X == a)
         {
-            std::cout << "匹配终结符: " << X.name << " ✓\n";
+#ifdef DEBUG
+            cout << "匹配终结符: " << X.name << " ✓\n";
+#endif
             pos++;
         }
         else
@@ -658,11 +666,12 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
         }
 
         const Production &p = ll1Table.getEntry(X, a);
-
-        std::cout << "使用产生式: " << p.left.name << " -> ";
+#ifdef DEBUG
+        cout << "使用产生式: " << p.left.name << " -> ";
         for (const Symbol &s : p.right)
-            std::cout << s.name << " ";
-        std::cout << std::endl;
+            cout << s.name << " ";
+        cout << endl;
+#endif
 
         for (const Symbol &Y : p.right)
         {
@@ -676,9 +685,9 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
     return node;
 }
 
-void LL1Parser::reportError(int line, const std::string &msg)
+void LL1Parser::reportError(int line, const string &msg)
 {
-    std::cout << "语法错误, 第" << line << "行, " << msg << std::endl;
+    cout << "语法错误, 第" << line << "行, " << msg << endl;
 }
 
 GrammarBuilder::GrammarBuilder(Grammar &g) : grammar(g)
@@ -917,15 +926,16 @@ simpleexpr -> ID | NUM | ( arithexpr )
 
     builder.loadFromText(grammarText);
     grammar.setStartSymbol(Symbol("program", SymbolType::NON_TERMINAL));
-
+#ifdef DEBUG
     cout << "Grammar loaded.\n";
+#endif
 
     /* ========= 2. FIRST / FOLLOW ========= */
 
     FirstFollowCalculator ff(grammar);
     ff.computeFirst();
     ff.computeFollow();
-
+#ifdef DEBUG
     cout << "\nFIRST 集合:\n";
     for (const Symbol &nt : grammar.getNonTerminals())
     {
@@ -943,12 +953,13 @@ simpleexpr -> ID | NUM | ( arithexpr )
             cout << s.name << " ";
         cout << "}\n";
     }
+#endif
 
     /* ========= 3. 构建 LL(1) 表 ========= */
 
     LL1Table table;
     table.build(grammar, ff);
-
+#ifdef DEBUG
     if (table.hasConflict())
     {
         cout << "\n⚠ 文法不是 LL(1)，存在冲突，解析终止。\n";
@@ -956,6 +967,7 @@ simpleexpr -> ID | NUM | ( arithexpr )
     }
 
     cout << "\nLL(1) table built successfully.\n";
+#endif
 
     /* ========= 4. 读取输入 ========= */
 
@@ -968,9 +980,11 @@ simpleexpr -> ID | NUM | ( arithexpr )
     /* ========= 5. LL(1) 预测分析 + 构建语法树 ========= */
 
     LL1Parser parser(grammar, table);
-
+#ifdef DEBUG
     cout << "\nStart parsing...\n";
+#endif
     parser.parse(input);
-
+#ifdef DEBUG
     cout << "\nParsing finished.\n";
+#endif
 }
