@@ -162,20 +162,16 @@ private:
 class GrammarBuilder
 {
 public:
-    GrammarBuilder(Grammar &g);
-
-    // 从多行文本读取文法
-    void loadFromText(const string &text);
+    GrammarBuilder(Grammar &g, const vector<string> &terminals, const string &grammarText);
 
 private:
     Grammar &grammar;
 
-    // 符号表，保证同名符号唯一
+    // 符号表，保证同名唯一
     map<string, Symbol> symbolTable;
 
-    // 工具函数
+    // 内部工具
     Symbol getOrCreateSymbol(const string &name, SymbolType type);
-
     void parseLine(const string &line);
 
     // 字符串工具
@@ -252,8 +248,6 @@ private:
 
     void reportError(int line, const string &msg);
 };
-
-// ========= 实现 =========
 
 // ========= 实现 =========
 
@@ -670,30 +664,20 @@ void LL1Parser::reportError(int line, const string &msg)
     cout << "语法错误, 第" << line << "行, " << msg << endl;
 }
 
-GrammarBuilder::GrammarBuilder(Grammar &g) : grammar(g)
+GrammarBuilder::GrammarBuilder(Grammar &g, const vector<string> &terminals, const string &grammarText) : grammar(g)
 {
-    // 已有预注册 ε 和 $
-    symbolTable["ε"] = EPSILON;
+    /* ===== 1. 预注册 ε 和 $ ===== */
     symbolTable["E"] = EPSILON;
     symbolTable["$"] = END_MARK;
 
-    // 预注册保留字和操作符为终结符
-    vector<string> terminals = {
-        "if", "then", "else", "while",
-        "ID", "NUM",
-        "{", "}", "(", ")", ";",
-        "+", "-", "*", "/",
-        "=", "<", "<=", "==", ">", ">="};
-
+    /* ===== 2. 注册终结符 ===== */
     for (const string &t : terminals)
     {
         symbolTable[t] = Symbol(t, SymbolType::TERMINAL);
     }
-}
 
-void GrammarBuilder::loadFromText(const string &text)
-{
-    istringstream iss(text);
+    /* ===== 3. 解析文法文本 ===== */
+    istringstream iss(grammarText);
     string line;
 
     while (getline(iss, line))
@@ -707,7 +691,7 @@ void GrammarBuilder::loadFromText(const string &text)
 
 void GrammarBuilder::parseLine(const string &line)
 {
-    // 形如：A -> B c | d
+    // A -> B c | d
     size_t pos = line.find("->");
     if (pos == string::npos)
         return;
@@ -718,14 +702,13 @@ void GrammarBuilder::parseLine(const string &line)
     // 左部一定是非终结符
     Symbol left = getOrCreateSymbol(leftStr, SymbolType::NON_TERMINAL);
 
-    // 右部按 |
     vector<string> alternatives = split(rightStr, '|');
 
     for (string &alt : alternatives)
     {
+        alt = trim(alt);
         vector<Symbol> right;
 
-        alt = trim(alt);
         if (alt == "ε" || alt == "E")
         {
             right.push_back(EPSILON);
@@ -739,7 +722,6 @@ void GrammarBuilder::parseLine(const string &line)
                 if (tok.empty())
                     continue;
 
-                // 优先查 symbolTable
                 auto it = symbolTable.find(tok);
                 if (it != symbolTable.end())
                 {
@@ -747,7 +729,7 @@ void GrammarBuilder::parseLine(const string &line)
                 }
                 else
                 {
-                    // 没有注册的 token 当作非终结符
+                    // 默认：未注册的符号视为非终结符
                     right.push_back(getOrCreateSymbol(tok, SymbolType::NON_TERMINAL));
                 }
             }
@@ -857,28 +839,33 @@ void ParseTree::printNode(ParseTreeNode *node, int indent) const
 void Analysis()
 {
     /* ========= 1. 构建文法 ========= */
-
-    Grammar grammar;
-    GrammarBuilder builder(grammar);
-
     string grammarText = R"(
 program -> compoundstmt
 stmt -> ifstmt | whilestmt | assgstmt | compoundstmt
 compoundstmt -> { stmts }
-stmts -> stmt stmts | ε
+stmts -> stmt stmts | E
 ifstmt -> if ( boolexpr ) then stmt else stmt
 whilestmt -> while ( boolexpr ) stmt
 assgstmt -> ID = arithexpr ;
 boolexpr -> arithexpr boolop arithexpr
 boolop -> < | > | <= | >= | ==
 arithexpr -> multexpr arithexprprime
-arithexprprime -> + multexpr arithexprprime | - multexpr arithexprprime | ε
+arithexprprime -> + multexpr arithexprprime | - multexpr arithexprprime | E
 multexpr -> simpleexpr multexprprime
-multexprprime -> * simpleexpr multexprprime | / simpleexpr multexprprime | ε
+multexprprime -> * simpleexpr multexprprime | / simpleexpr multexprprime | E
 simpleexpr -> ID | NUM | ( arithexpr )
 )";
 
-    builder.loadFromText(grammarText);
+    vector<string> terminals = {
+        "if", "then", "else", "while",
+        "ID", "NUM",
+        "{", "}", "(", ")", ";",
+        "+", "-", "*", "/",
+        "=", "<", "<=", "==", ">", ">="};
+
+    Grammar grammar;
+    GrammarBuilder builder(grammar, terminals, grammarText);
+
     grammar.setStartSymbol(Symbol("program", SymbolType::NON_TERMINAL));
 #ifdef DEBUG
     cout << "Grammar loaded.\n";
