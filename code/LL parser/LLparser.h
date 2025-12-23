@@ -165,6 +165,32 @@ private:
     void synchronize(const Symbol &nonTerminal, const vector<Symbol> &input, size_t &pos);
 };
 
+// ========= GrammarBuilder =========
+
+class GrammarBuilder
+{
+public:
+    GrammarBuilder(Grammar &g);
+
+    // 从多行文本读取文法
+    void loadFromText(const string &text);
+
+private:
+    Grammar &grammar;
+
+    // 符号表，保证同名符号唯一
+    map<string, Symbol> symbolTable;
+
+    // 工具函数
+    Symbol getOrCreateSymbol(const string &name, SymbolType type);
+
+    void parseLine(const string &line);
+
+    // 字符串工具
+    static string trim(const string &s);
+    static vector<string> split(const string &s, char delim);
+};
+
 // ========= 实现 =========
 
 Symbol::Symbol() : name(""), type(SymbolType::TERMINAL) {}
@@ -619,30 +645,6 @@ void LL1Parser::parse(const vector<Symbol> &input)
         reportError(0, "输入未完全匹配");
     }
 }
-
-class GrammarBuilder
-{
-public:
-    GrammarBuilder(Grammar &g);
-
-    // 从多行文本读取文法
-    void loadFromText(const string &text);
-
-private:
-    Grammar &grammar;
-
-    // 符号表，保证同名符号唯一
-    map<string, Symbol> symbolTable;
-
-    // 工具函数
-    Symbol getOrCreateSymbol(const string &name, SymbolType type);
-
-    void parseLine(const string &line);
-
-    // 字符串工具
-    static string trim(const string &s);
-    static vector<string> split(const string &s, char delim);
-};
 
 GrammarBuilder::GrammarBuilder(Grammar &g) : grammar(g)
 {
