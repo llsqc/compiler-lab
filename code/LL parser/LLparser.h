@@ -231,7 +231,7 @@ private:
 class LL1Parser
 {
 public:
-    LL1Parser(const Grammar &g, const LL1Table &table);
+    LL1Parser(const Grammar &g, const LL1Table &table) : grammar(g), ll1Table(table), pos(0), parseTree(nullptr) {}
 
     void parse(const vector<Symbol> &input);
 
@@ -345,8 +345,6 @@ FirstFollowCalculator::FirstFollowCalculator(const Grammar &g) : grammar(g)
     // ===== 关键补充 =====
     firstSet[EPSILON].insert(EPSILON);
     firstSet[END_MARK].insert(END_MARK);
-
-    followSet[END_MARK]; // 保证存在（通常不用，但安全）
 }
 
 const set<Symbol> &FirstFollowCalculator::getFirst(const Symbol &s) const
@@ -574,11 +572,6 @@ bool LL1Table::hasConflict() const
     return conflict;
 }
 
-LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table)
-    : grammar(g), ll1Table(table), pos(0), parseTree(nullptr)
-{
-}
-
 void LL1Parser::parse(const vector<Symbol> &input)
 {
     tokens = input;
@@ -709,7 +702,7 @@ void GrammarBuilder::parseLine(const string &line)
         alt = trim(alt);
         vector<Symbol> right;
 
-        if (alt == "ε" || alt == "E")
+        if (alt == "E")
         {
             right.push_back(EPSILON);
         }
@@ -781,7 +774,7 @@ InputProcessor::InputProcessor(const string &input, const Grammar &grammar)
     while (ss >> token)
     {
         // ① 忽略 ε
-        if (token == "ε")
+        if (token == "E")
             continue;
 
         // ② 忽略 Ctrl+Z / EOF / 非法控制符
@@ -803,7 +796,7 @@ vector<Symbol> InputProcessor::getSymbolStream() const
 
 Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
 {
-    if (token == "ε")
+    if (token == "E")
     {
         throw logic_error("EPSILON must not appear in input stream");
     }
