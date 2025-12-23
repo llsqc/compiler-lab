@@ -191,6 +191,23 @@ private:
     static vector<string> split(const string &s, char delim);
 };
 
+// ========= InputProcessor =========
+
+class InputProcessor
+{
+public:
+    InputProcessor(const string &input, const Grammar &grammar);
+
+    // 返回解析用的符号流（末尾含 $）
+    vector<Symbol> getSymbolStream() const;
+
+private:
+    vector<Symbol> symbolStream;
+
+    // 工具函数
+    Symbol makeTerminal(const string &token, const Grammar &grammar);
+};
+
 // ========= 实现 =========
 
 Symbol::Symbol() : name(""), type(SymbolType::TERMINAL) {}
@@ -755,6 +772,53 @@ vector<string> GrammarBuilder::split(const string &s, char delim)
     return res;
 }
 
+// ========= InputProcessor 实现 =========
+
+InputProcessor::InputProcessor(const string &input, const Grammar &grammar)
+{
+    stringstream ss(input);
+    string token;
+
+    while (ss >> token)
+    {
+        // ① 忽略 ε
+        if (token == "ε")
+            continue;
+
+        // ② 忽略 Ctrl+Z / EOF / 非法控制符
+        if (token.size() == 1 && token[0] == 26) // ASCII 0x1A
+            continue;
+
+        Symbol s = makeTerminal(token, grammar);
+        symbolStream.push_back(s);
+    }
+
+    // 末尾加入 $
+    symbolStream.push_back(END_MARK);
+}
+
+vector<Symbol> InputProcessor::getSymbolStream() const
+{
+    return symbolStream;
+}
+
+Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
+{
+    if (token == "ε")
+    {
+        throw logic_error("EPSILON must not appear in input stream");
+    }
+
+    Symbol s(token, SymbolType::TERMINAL);
+
+    if (!grammar.isTerminal(s))
+    {
+        throw logic_error("Unknown terminal in input: " + token);
+    }
+
+    return s;
+}
+
 void Analysis()
 {
     /* ========= 1. 构建文法 ========= */
@@ -824,17 +888,13 @@ simpleexpr -> ID | NUM | ( arithexpr )
 
     cout << "\nLL(1) table built successfully.\n";
 
-    /* ========= 4. 构造测试输入 ========= */
-    // 对应：{ ID = NUM ; }
+    /* ========= 4. 读取并处理输入 ========= */
 
-    vector<Symbol> input = {
-        Symbol("{", SymbolType::TERMINAL),
-        Symbol("ID", SymbolType::TERMINAL),
-        Symbol("=", SymbolType::TERMINAL),
-        Symbol("NUM", SymbolType::TERMINAL),
-        Symbol(";", SymbolType::TERMINAL),
-        Symbol("}", SymbolType::TERMINAL),
-        END_MARK};
+    string inputText;
+    read_prog(inputText);
+
+    InputProcessor processor(inputText, grammar);
+    vector<Symbol> input = processor.getSymbolStream();
 
     /* ========= 5. 预测分析 ========= */
 
