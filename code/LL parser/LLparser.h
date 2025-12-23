@@ -208,6 +208,38 @@ private:
     Symbol makeTerminal(const string &token, const Grammar &grammar);
 };
 
+// ========= ParseTreeNode =========
+
+class ParseTreeNode
+{
+public:
+    Symbol symbol;                    // 当前结点对应的文法符号
+    vector<ParseTreeNode *> children; // 子结点（从左到右）
+
+    explicit ParseTreeNode(const Symbol &s);
+
+    bool isLeaf() const;
+
+    void addChild(ParseTreeNode *child);
+};
+
+// ========= ParseTree =========
+
+class ParseTree
+{
+public:
+    explicit ParseTree(ParseTreeNode *r);
+
+    ParseTreeNode *getRoot() const;
+
+    void print() const;
+
+private:
+    ParseTreeNode *root;
+
+    void printNode(ParseTreeNode *node, int indent) const;
+};
+
 // ========= 实现 =========
 
 Symbol::Symbol() : name(""), type(SymbolType::TERMINAL) {}
@@ -564,9 +596,7 @@ bool LL1Table::hasConflict() const
     return conflict;
 }
 
-LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table) : grammar(g), ll1Table(table)
-{
-}
+LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table) : grammar(g), ll1Table(table) {}
 
 void LL1Parser::reportError(int line, const string &msg)
 {
@@ -817,6 +847,52 @@ Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
     }
 
     return s;
+}
+
+// ========= ParseTreeNode 实现 =========
+
+ParseTreeNode::ParseTreeNode(const Symbol &s) : symbol(s) {}
+
+bool ParseTreeNode::isLeaf() const
+{
+    return children.empty();
+}
+
+void ParseTreeNode::addChild(ParseTreeNode *child)
+{
+    children.push_back(child);
+}
+
+// ========= ParseTree 实现 =========
+
+ParseTree::ParseTree(ParseTreeNode *r) : root(r) {}
+
+ParseTreeNode *ParseTree::getRoot() const
+{
+    return root;
+}
+
+void ParseTree::print() const
+{
+    printNode(root, 0);
+}
+
+void ParseTree::printNode(ParseTreeNode *node, int indent) const
+{
+    if (!node)
+        return;
+
+    // 打印缩进
+    for (int i = 0; i < indent; ++i)
+        cout << '\t';
+
+    cout << node->symbol.name << endl;
+
+    // 递归打印子结点
+    for (ParseTreeNode *child : node->children)
+    {
+        printNode(child, indent + 1);
+    }
 }
 
 void Analysis()
