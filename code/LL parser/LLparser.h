@@ -40,12 +40,25 @@ struct Symbol
     string name;
     SymbolType type;
 
-    Symbol();
-    Symbol(const string &n, SymbolType t);
+    Symbol() : name(""), type(SymbolType::TERMINAL) {};
+    Symbol(const string &n, SymbolType t) : name(n), type(t) {}
 
-    bool operator==(const Symbol &other) const;
-    bool operator!=(const Symbol &other) const;
-    bool operator<(const Symbol &other) const;
+    bool operator==(const Symbol &other) const
+    {
+        return name == other.name && type == other.type;
+    }
+
+    bool operator!=(const Symbol &other) const
+    {
+        return !(*this == other);
+    }
+
+    bool operator<(const Symbol &other) const
+    {
+        if (type != other.type)
+            return type < other.type;
+        return name < other.name;
+    }
 };
 
 // ========= 规范ε和$符号 =========
@@ -61,8 +74,8 @@ struct Production
     vector<Symbol> right; // α
 
     // A → α
-    Production();
-    Production(const Symbol &l, const vector<Symbol> &r);
+    Production() {}
+    Production(const Symbol &l, const vector<Symbol> &r) : left(l), right(r) {}
 };
 
 // ========= Grammar =========
@@ -71,7 +84,7 @@ class Grammar
 {
 public:
     // 构造
-    Grammar();
+    Grammar() {};
     Grammar(const Symbol &start);
 
     void setStartSymbol(const Symbol &s);
@@ -122,9 +135,6 @@ private:
 
     map<Symbol, set<Symbol>> firstSet;
     map<Symbol, set<Symbol>> followSet;
-
-    bool addToFirst(const Symbol &s, const Symbol &x);
-    bool addToFollow(const Symbol &s, const Symbol &x);
 };
 
 // ========= LL1Table =========
@@ -198,10 +208,10 @@ public:
     Symbol symbol;                    // 当前结点对应的文法符号
     vector<ParseTreeNode *> children; // 子结点（从左到右）
 
-    explicit ParseTreeNode(const Symbol &s);
+    explicit ParseTreeNode(const Symbol &s) : symbol(s) {};
 
-    bool isLeaf() const;
-    void addChild(ParseTreeNode *child);
+    bool isLeaf() const { return children.empty(); };
+    void addChild(ParseTreeNode *child) { children.push_back(child); };
 };
 
 // ========= ParseTree =========
@@ -209,10 +219,10 @@ public:
 class ParseTree
 {
 public:
-    explicit ParseTree(ParseTreeNode *root);
+    explicit ParseTree(ParseTreeNode *root) : root(root) {};
 
-    ParseTreeNode *getRoot() const;
-    void print() const;
+    ParseTreeNode *getRoot() const { return root; };
+    void print() const { printNode(root, 0); };
 
 private:
     ParseTreeNode *root;
@@ -245,36 +255,7 @@ private:
 
 // ========= 实现 =========
 
-Symbol::Symbol() : name(""), type(SymbolType::TERMINAL) {}
-
-Symbol::Symbol(const string &n, SymbolType t) : name(n), type(t) {}
-
-bool Symbol::operator==(const Symbol &other) const
-{
-    return name == other.name && type == other.type;
-}
-
-bool Symbol::operator!=(const Symbol &other) const
-{
-    return !(*this == other);
-}
-
-bool Symbol::operator<(const Symbol &other) const
-{
-    if (type != other.type)
-        return type < other.type;
-    return name < other.name;
-}
-
 // ========= 实现 =========
-
-Production::Production() {}
-
-Production::Production(const Symbol &l, const vector<Symbol> &r) : left(l), right(r) {}
-
-// ========= 实现 =========
-
-Grammar::Grammar() {}
 
 Grammar::Grammar(const Symbol &start) : startSymbol(start)
 {
@@ -607,7 +588,6 @@ LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table)
 void LL1Parser::parse(const vector<Symbol> &input)
 {
     tokens = input;
-    tokens.push_back(END_MARK);
     pos = 0;
 
 #ifdef DEBUG
@@ -856,33 +836,7 @@ Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
     return s;
 }
 
-// ========= ParseTreeNode 实现 =========
-
-ParseTreeNode::ParseTreeNode(const Symbol &s) : symbol(s) {}
-
-bool ParseTreeNode::isLeaf() const
-{
-    return children.empty();
-}
-
-void ParseTreeNode::addChild(ParseTreeNode *child)
-{
-    children.push_back(child);
-}
-
 // ========= ParseTree 实现 =========
-
-ParseTree::ParseTree(ParseTreeNode *r) : root(r) {}
-
-ParseTreeNode *ParseTree::getRoot() const
-{
-    return root;
-}
-
-void ParseTree::print() const
-{
-    printNode(root, 0);
-}
 
 void ParseTree::printNode(ParseTreeNode *node, int indent) const
 {
