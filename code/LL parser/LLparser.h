@@ -179,6 +179,14 @@ private:
     static vector<string> split(const string &s, char delim);
 };
 
+// ========= Token =========
+
+struct Token
+{
+    Symbol symbol;
+    int line;
+};
+
 // ========= InputProcessor =========
 
 class InputProcessor
@@ -187,10 +195,10 @@ public:
     InputProcessor(const string &input, const Grammar &grammar);
 
     // 返回解析用的符号流（末尾含 $）
-    vector<Symbol> getSymbolStream() const;
+    vector<Token> getTokenStream() const;
 
 private:
-    vector<Symbol> symbolStream;
+    vector<Token> tokenStream;
 
     // 工具函数
     Symbol makeTerminal(const string &token, const Grammar &grammar);
@@ -233,13 +241,13 @@ class LL1Parser
 public:
     LL1Parser(const Grammar &g, const LL1Table &table) : grammar(g), ll1Table(table), pos(0), parseTree(nullptr) {}
 
-    void parse(const vector<Symbol> &input);
+    void parse(const vector<Token> &input);
 
 private:
     const Grammar &grammar;
     const LL1Table &ll1Table;
 
-    vector<Symbol> tokens;
+    vector<Token> tokens;
     size_t pos;
 
     ParseTree *parseTree;
@@ -572,7 +580,7 @@ bool LL1Table::hasConflict() const
     return conflict;
 }
 
-void LL1Parser::parse(const vector<Symbol> &input)
+void LL1Parser::parse(const vector<Token> &input)
 {
     tokens = input;
     pos = 0;
@@ -584,7 +592,7 @@ void LL1Parser::parse(const vector<Symbol> &input)
     ParseTreeNode *root = parseSymbol(grammar.getStartSymbol());
     parseTree = new ParseTree(root);
 
-    if (tokens[pos] != END_MARK)
+    if (tokens[pos].symbol != END_MARK)
     {
         reportError(0, "输入未完全匹配");
     }
@@ -597,7 +605,8 @@ void LL1Parser::parse(const vector<Symbol> &input)
 
 ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
 {
-    Symbol a = tokens[pos];
+    Symbol a = tokens[pos].symbol;
+    int line = tokens[pos].line;
     ParseTreeNode *node = new ParseTreeNode(X);
 
     // ① 终结符 or $
@@ -605,14 +614,12 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
     {
         if (X == a)
         {
-#ifdef DEBUG
-            cout << "匹配终结符: " << X.name << " ✓\n";
-#endif
-            pos++;
+            pos++; // 正常匹配
         }
         else
         {
-            reportError(0, "缺少 \"" + X.name + "\"");
+            // 缺少终结符：报告错误，但不吃输入
+            reportError(line, "缺少\"" + X.name + "\"");
         }
         return node;
     }
@@ -626,20 +633,27 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
     // ③ 非终结符
     if (X.type == SymbolType::NON_TERMINAL)
     {
+        // 如果 LL(1) 表中没有入口
         if (!ll1Table.hasEntry(X, a))
         {
-            reportError(0, "非法符号 \"" + a.name + "\"");
+            const auto &prods = grammar.getProductionsOf(X);
+            for (const Production &p : prods)
+            {
+                if (p.right.size() == 1 && p.right[0].type == SymbolType::EPSILON)
+                {
+                    // 选择 ε 产生式
+                    ParseTreeNode *eps = new ParseTreeNode(EPSILON);
+                    node->addChild(eps);
+                    return node;
+                }
+            }
+
+            reportError(line, "非法符号 \"" + a.name + "\"");
+            pos++; // 丢弃一个输入符号
             return node;
         }
 
         const Production &p = ll1Table.getEntry(X, a);
-#ifdef DEBUG
-        cout << "使用产生式: " << p.left.name << " -> ";
-        for (const Symbol &s : p.right)
-            cout << s.name << " ";
-        cout << endl;
-#endif
-
         for (const Symbol &Y : p.right)
         {
             ParseTreeNode *child = parseSymbol(Y);
@@ -654,7 +668,7 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
 
 void LL1Parser::reportError(int line, const string &msg)
 {
-    cout << "语法错误, 第" << line << "行, " << msg << endl;
+    cout << "语法错误,第" << line << "行," << msg << endl;
 }
 
 GrammarBuilder::GrammarBuilder(Grammar &g, const vector<string> &terminals, const string &grammarText) : grammar(g)
@@ -768,30 +782,47 @@ vector<string> GrammarBuilder::split(const string &s, char delim)
 
 InputProcessor::InputProcessor(const string &input, const Grammar &grammar)
 {
-    stringstream ss(input);
     string token;
+    int line = 0;
 
-    while (ss >> token)
+    for (size_t i = 0; i < input.size();)
     {
-        // ① 忽略 ε
-        if (token == "E")
+        if (input[i] == '\n')
+        {
+            line++;
+            i++;
+            continue;
+        }
+
+        if (isspace(input[i]))
+        {
+            i++;
+            continue;
+        }
+
+        // 读一个 token
+        string tok;
+        while (i < input.size() && !isspace(input[i]))
+        {
+            tok += input[i++];
+        }
+
+        if (tok == "E")
             continue;
 
-        // ② 忽略 Ctrl+Z / EOF / 非法控制符
-        if (token.size() == 1 && token[0] == 26) // ASCII 0x1A
-            continue;
+        Symbol s(tok, SymbolType::TERMINAL);
+        if (!grammar.isTerminal(s))
+            throw logic_error("Unknown terminal: " + tok);
 
-        Symbol s = makeTerminal(token, grammar);
-        symbolStream.push_back(s);
+        tokenStream.push_back({s, line});
     }
 
-    // 末尾加入 $
-    symbolStream.push_back(END_MARK);
+    tokenStream.push_back({END_MARK, line});
 }
 
-vector<Symbol> InputProcessor::getSymbolStream() const
+vector<Token> InputProcessor::getTokenStream() const
 {
-    return symbolStream;
+    return tokenStream;
 }
 
 Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
@@ -909,7 +940,7 @@ simpleexpr -> ID | NUM | ( arithexpr )
     read_prog(inputText);
 
     InputProcessor processor(inputText, grammar);
-    vector<Symbol> input = processor.getSymbolStream();
+    vector<Token> input = processor.getTokenStream();
 
     /* ========= 5. LL(1) 预测分析 + 构建语法树 ========= */
 
