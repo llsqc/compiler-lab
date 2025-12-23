@@ -48,7 +48,7 @@ struct Symbol
 
 // ========= 规范ε和$符号 =========
 
-const Symbol EPSILON("ε", SymbolType::EPSILON);
+const Symbol EPSILON("E", SymbolType::EPSILON);
 const Symbol END_MARK("$", SymbolType::END);
 
 // ========= Production =========
@@ -199,7 +199,6 @@ public:
     explicit ParseTreeNode(const Symbol &s);
 
     bool isLeaf() const;
-
     void addChild(ParseTreeNode *child);
 };
 
@@ -208,10 +207,9 @@ public:
 class ParseTree
 {
 public:
-    explicit ParseTree(ParseTreeNode *r);
+    explicit ParseTree(ParseTreeNode *root);
 
     ParseTreeNode *getRoot() const;
-
     void print() const;
 
 private:
@@ -227,19 +225,20 @@ class LL1Parser
 public:
     LL1Parser(const Grammar &g, const LL1Table &table);
 
-    void parse(const vector<Symbol> &input);
+    void parse(const std::vector<Symbol> &input);
 
 private:
     const Grammar &grammar;
     const LL1Table &ll1Table;
 
-    ParseTree *parseTree;             // 最终生成的语法树
-    stack<ParseTreeNode *> nodeStack; // 结点栈（与符号栈同步）
-    stack<Symbol> parseStack;
+    std::vector<Symbol> tokens;
+    size_t pos;
 
-    void reportError(int line, const string &msg);
+    ParseTree *parseTree;
 
-    void synchronize(const Symbol &nonTerminal, const vector<Symbol> &input, size_t &pos);
+    ParseTreeNode *parseSymbol(const Symbol &X);
+
+    void reportError(int line, const std::string &msg);
 };
 
 // ========= 实现 =========
@@ -598,136 +597,88 @@ bool LL1Table::hasConflict() const
     return conflict;
 }
 
-LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table) : grammar(g), ll1Table(table) {}
-
-void LL1Parser::reportError(int line, const string &msg)
+LL1Parser::LL1Parser(const Grammar &g, const LL1Table &table)
+    : grammar(g), ll1Table(table), pos(0), parseTree(nullptr)
 {
-    cout << "语法错误,第" << line << "行," << msg << endl;
 }
 
-void LL1Parser::synchronize(const Symbol &nonTerminal, const vector<Symbol> &input, size_t &pos)
+void LL1Parser::parse(const std::vector<Symbol> &input)
 {
-    // 跳过输入符号，直到：
-    // 1) 遇到 FOLLOW(nonTerminal) 中的符号
-    // 2) 或遇到输入结束
+    tokens = input;
+    tokens.push_back(END_MARK);
+    pos = 0;
 
-    // 这里假设 FOLLOW 集已经在表构造阶段间接使用过
-    while (pos < input.size())
-    {
-        // 如果表中存在 (nonTerminal, 当前输入)，可以继续分析
-        if (ll1Table.hasEntry(nonTerminal, input[pos]))
-            return;
+    std::cout << "=== 开始解析 ===\n";
 
-        pos++; // 丢弃一个输入符号
-    }
-}
-
-void LL1Parser::parse(const vector<Symbol> &input)
-{
-    parseStack = stack<Symbol>();
-    nodeStack = stack<ParseTreeNode *>();
-
-    // 1. 初始化符号栈
-    parseStack.push(END_MARK);
-    parseStack.push(grammar.getStartSymbol());
-
-    // 2. 初始化语法树
-    ParseTreeNode *root = new ParseTreeNode(grammar.getStartSymbol());
-    nodeStack.push(root);
+    ParseTreeNode *root = parseSymbol(grammar.getStartSymbol());
     parseTree = new ParseTree(root);
 
-    size_t pos = 0;
-
-    // 输入末尾补 $
-    vector<Symbol> tokens = input;
-    tokens.push_back(END_MARK);
-
-    while (!parseStack.empty())
-    {
-        Symbol X = parseStack.top();
-        Symbol a = tokens[pos];
-
-        /* ========= 1 栈顶是终结符 或 $ ========= */
-        if (X.type == SymbolType::TERMINAL || X.type == SymbolType::END)
-        {
-            if (X == a)
-            {
-                parseStack.pop();
-                nodeStack.pop(); // 同步弹出结点
-                pos++;
-            }
-            else
-            {
-                reportError(0, "缺少 \"" + X.name + "\"");
-                parseStack.pop();
-                nodeStack.pop(); // 保持同步
-            }
-        }
-
-        /* ========= 2 栈顶是 ε ========= */
-        else if (X.type == SymbolType::EPSILON)
-        {
-            parseStack.pop();
-        }
-
-        /* ========= 3 栈顶是非终结符 ========= */
-        else if (X.type == SymbolType::NON_TERMINAL)
-        {
-            if (ll1Table.hasEntry(X, a))
-            {
-                const Production &p = ll1Table.getEntry(X, a);
-
-                parseStack.pop();
-                ParseTreeNode *parent = nodeStack.top(); // 当前展开的结点
-
-                // 保存子结点
-                vector<ParseTreeNode *> children;
-
-                // 逆序压入产生式右部
-                for (auto it = p.right.rbegin(); it != p.right.rend(); ++it)
-                {
-                    if (it->type != SymbolType::EPSILON)
-                    {
-                        parseStack.push(*it);
-
-                        ParseTreeNode *child = new ParseTreeNode(*it);
-                        nodeStack.push(child);
-                        children.push_back(child);
-                    }
-                    else
-                    {
-                        // ε 作为语法树结点
-                        ParseTreeNode *epsNode = new ParseTreeNode(EPSILON);
-                        parent->addChild(epsNode);
-                    }
-                }
-
-                // children 是逆序的，挂回 parent 要再反一次
-                for (auto it = children.rbegin(); it != children.rend(); ++it)
-                {
-                    parent->addChild(*it);
-                }
-            }
-            else
-            {
-                reportError(0, "非法符号 \"" + a.name + "\"");
-                parseStack.pop();
-                synchronize(X, tokens, pos);
-            }
-        }
-        else
-        {
-            parseStack.pop();
-        }
-    }
-
-    if (pos < tokens.size() - 1)
+    if (tokens[pos] != END_MARK)
     {
         reportError(0, "输入未完全匹配");
     }
 
-    cout << "Parse finished.\n";
-    parseTree->print(); // 输出语法树
+    std::cout << "=== 解析结束 ===\n";
+    parseTree->print();
+}
+
+ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
+{
+    Symbol a = tokens[pos];
+    ParseTreeNode *node = new ParseTreeNode(X);
+
+    // ① 终结符 or $
+    if (X.type == SymbolType::TERMINAL || X.type == SymbolType::END)
+    {
+        if (X == a)
+        {
+            std::cout << "匹配终结符: " << X.name << " ✓\n";
+            pos++;
+        }
+        else
+        {
+            reportError(0, "缺少 \"" + X.name + "\"");
+        }
+        return node;
+    }
+
+    // ② ε
+    if (X.type == SymbolType::EPSILON)
+    {
+        return node;
+    }
+
+    // ③ 非终结符
+    if (X.type == SymbolType::NON_TERMINAL)
+    {
+        if (!ll1Table.hasEntry(X, a))
+        {
+            reportError(0, "非法符号 \"" + a.name + "\"");
+            return node;
+        }
+
+        const Production &p = ll1Table.getEntry(X, a);
+
+        std::cout << "使用产生式: " << p.left.name << " -> ";
+        for (const Symbol &s : p.right)
+            std::cout << s.name << " ";
+        std::cout << std::endl;
+
+        for (const Symbol &Y : p.right)
+        {
+            ParseTreeNode *child = parseSymbol(Y);
+            node->addChild(child);
+        }
+
+        return node;
+    }
+
+    return node;
+}
+
+void LL1Parser::reportError(int line, const std::string &msg)
+{
+    std::cout << "语法错误, 第" << line << "行, " << msg << std::endl;
 }
 
 GrammarBuilder::GrammarBuilder(Grammar &g) : grammar(g)
@@ -929,13 +880,11 @@ void ParseTree::printNode(ParseTreeNode *node, int indent) const
     if (!node)
         return;
 
-    // 打印缩进
     for (int i = 0; i < indent; ++i)
         cout << '\t';
 
     cout << node->symbol.name << endl;
 
-    // 递归打印子结点
     for (ParseTreeNode *child : node->children)
     {
         printNode(child, indent + 1);
@@ -947,7 +896,6 @@ void Analysis()
     /* ========= 1. 构建文法 ========= */
 
     Grammar grammar;
-
     GrammarBuilder builder(grammar);
 
     string grammarText = R"(
@@ -968,19 +916,17 @@ simpleexpr -> ID | NUM | ( arithexpr )
 )";
 
     builder.loadFromText(grammarText);
-
     grammar.setStartSymbol(Symbol("program", SymbolType::NON_TERMINAL));
 
     cout << "Grammar loaded.\n";
 
-    /* ========= 2. 计算 FIRST / FOLLOW ========= */
+    /* ========= 2. FIRST / FOLLOW ========= */
 
     FirstFollowCalculator ff(grammar);
-
     ff.computeFirst();
     ff.computeFollow();
 
-    cout << "\nFIRST sets:\n";
+    cout << "\nFIRST 集合:\n";
     for (const Symbol &nt : grammar.getNonTerminals())
     {
         cout << "FIRST(" << nt.name << ") = { ";
@@ -989,7 +935,7 @@ simpleexpr -> ID | NUM | ( arithexpr )
         cout << "}\n";
     }
 
-    cout << "\nFOLLOW sets:\n";
+    cout << "\nFOLLOW 集合:\n";
     for (const Symbol &nt : grammar.getNonTerminals())
     {
         cout << "FOLLOW(" << nt.name << ") = { ";
@@ -998,20 +944,20 @@ simpleexpr -> ID | NUM | ( arithexpr )
         cout << "}\n";
     }
 
-    /* ========= 3. 构建 LL(1) 分析表 ========= */
+    /* ========= 3. 构建 LL(1) 表 ========= */
 
     LL1Table table;
     table.build(grammar, ff);
 
     if (table.hasConflict())
     {
-        cout << "\n⚠ 文法不是 LL(1)，存在冲突。\n";
+        cout << "\n⚠ 文法不是 LL(1)，存在冲突，解析终止。\n";
         return;
     }
 
     cout << "\nLL(1) table built successfully.\n";
 
-    /* ========= 4. 读取并处理输入 ========= */
+    /* ========= 4. 读取输入 ========= */
 
     string inputText;
     read_prog(inputText);
@@ -1019,7 +965,7 @@ simpleexpr -> ID | NUM | ( arithexpr )
     InputProcessor processor(inputText, grammar);
     vector<Symbol> input = processor.getSymbolStream();
 
-    /* ========= 5. 预测分析 ========= */
+    /* ========= 5. LL(1) 预测分析 + 构建语法树 ========= */
 
     LL1Parser parser(grammar, table);
 
