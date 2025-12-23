@@ -276,20 +276,24 @@ const set<Symbol> &Grammar::getNonTerminals() const
 
 FirstFollowCalculator::FirstFollowCalculator(const Grammar &g) : grammar(g)
 {
-    // 初始化 FIRST / FOLLOW 表
+    // 非终结符
     for (const Symbol &nt : grammar.getNonTerminals())
     {
         firstSet[nt] = set<Symbol>();
         followSet[nt] = set<Symbol>();
     }
 
-    // 终结符的 FIRST 是它自己
+    // 终结符
     for (const Symbol &t : grammar.getTerminals())
     {
         firstSet[t].insert(t);
     }
 
+    // ===== 关键补充 =====
+    firstSet[EPSILON].insert(EPSILON);
     firstSet[END_MARK].insert(END_MARK);
+
+    followSet[END_MARK]; // 保证存在（通常不用，但安全）
 }
 
 const set<Symbol> &FirstFollowCalculator::getFirst(const Symbol &s) const
@@ -616,81 +620,226 @@ void LL1Parser::parse(const vector<Symbol> &input)
     }
 }
 
+class GrammarBuilder
+{
+public:
+    GrammarBuilder(Grammar &g);
+
+    // 从多行文本读取文法
+    void loadFromText(const string &text);
+
+private:
+    Grammar &grammar;
+
+    // 符号表，保证同名符号唯一
+    map<string, Symbol> symbolTable;
+
+    // 工具函数
+    Symbol getOrCreateSymbol(const string &name, SymbolType type);
+
+    void parseLine(const string &line);
+
+    // 字符串工具
+    static string trim(const string &s);
+    static vector<string> split(const string &s, char delim);
+};
+
+GrammarBuilder::GrammarBuilder(Grammar &g) : grammar(g)
+{
+    // 预注册 ε 和 $
+    symbolTable["ε"] = EPSILON;
+    symbolTable["E"] = EPSILON;
+    symbolTable["$"] = END_MARK;
+}
+
+void GrammarBuilder::loadFromText(const string &text)
+{
+    istringstream iss(text);
+    string line;
+
+    while (getline(iss, line))
+    {
+        line = trim(line);
+        if (line.empty())
+            continue;
+        parseLine(line);
+    }
+}
+
+void GrammarBuilder::parseLine(const string &line)
+{
+    // 形如：A -> B c | d
+    size_t pos = line.find("->");
+    if (pos == string::npos)
+        return;
+
+    string leftStr = trim(line.substr(0, pos));
+    string rightStr = trim(line.substr(pos + 2));
+
+    // 左部一定是非终结符
+    Symbol left = getOrCreateSymbol(leftStr, SymbolType::NON_TERMINAL);
+
+    // 右部按 |
+    vector<string> alternatives = split(rightStr, '|');
+
+    for (string &alt : alternatives)
+    {
+        vector<Symbol> right;
+
+        alt = trim(alt);
+        if (alt == "ε" || alt == "E")
+        {
+            right.push_back(EPSILON);
+        }
+        else
+        {
+            vector<string> tokens = split(alt, ' ');
+            for (string &tok : tokens)
+            {
+                tok = trim(tok);
+                if (tok.empty())
+                    continue;
+
+                if (tok == "ε" || tok == "E")
+                {
+                    right.push_back(EPSILON);
+                }
+                else
+                {
+                    SymbolType type;
+                    if (isupper(tok[0]) || !isalpha(tok[0]))
+                        type = SymbolType::TERMINAL;
+                    else
+                        type = SymbolType::NON_TERMINAL;
+
+                    right.push_back(getOrCreateSymbol(tok, type));
+                }
+            }
+        }
+
+        grammar.addProduction(left, right);
+    }
+}
+
+Symbol GrammarBuilder::getOrCreateSymbol(const string &name, SymbolType type)
+{
+    auto it = symbolTable.find(name);
+    if (it != symbolTable.end())
+        return it->second;
+
+    Symbol s(name, type);
+    symbolTable[name] = s;
+    return s;
+}
+
+string GrammarBuilder::trim(const string &s)
+{
+    size_t l = s.find_first_not_of(" \t\r\n");
+    size_t r = s.find_last_not_of(" \t\r\n");
+    if (l == string::npos)
+        return "";
+    return s.substr(l, r - l + 1);
+}
+
+vector<string> GrammarBuilder::split(const string &s, char delim)
+{
+    vector<string> res;
+    string tmp;
+    istringstream iss(s);
+
+    while (getline(iss, tmp, delim))
+        res.push_back(tmp);
+
+    return res;
+}
+
 void Analysis()
 {
-    /********* Begin *********/
+    /* ========= 1. 构建文法 ========= */
 
-    // ---------- 1. 定义非终结符 ----------
-    Symbol program("program", SymbolType::NON_TERMINAL);
-    Symbol stmt("stmt", SymbolType::NON_TERMINAL);
-    Symbol compoundstmt("compoundstmt", SymbolType::NON_TERMINAL);
-    Symbol stmts("stmts", SymbolType::NON_TERMINAL);
-    Symbol assgstmt("assgstmt", SymbolType::NON_TERMINAL);
+    Grammar grammar;
 
-    Symbol arithexpr("arithexpr", SymbolType::NON_TERMINAL);
-    Symbol arithexprprime("arithexprprime", SymbolType::NON_TERMINAL);
-    Symbol multexpr("multexpr", SymbolType::NON_TERMINAL);
-    Symbol multexprprime("multexprprime", SymbolType::NON_TERMINAL);
-    Symbol simpleexpr("simpleexpr", SymbolType::NON_TERMINAL);
+    GrammarBuilder builder(grammar);
 
-    // ---------- 2. 定义终结符 ----------
-    Symbol LBRACE("{", SymbolType::TERMINAL);
-    Symbol RBRACE("}", SymbolType::TERMINAL);
-    Symbol ID("ID", SymbolType::TERMINAL);
-    Symbol ASSIGN("=", SymbolType::TERMINAL);
-    Symbol NUM("NUM", SymbolType::TERMINAL);
-    Symbol SEMI(";", SymbolType::TERMINAL);
+    string grammarText = R"(
+program -> compoundstmt
+stmt -> ifstmt | whilestmt | assgstmt | compoundstmt
+compoundstmt -> { stmts }
+stmts -> stmt stmts | ε
+ifstmt -> if ( boolexpr ) then stmt else stmt
+whilestmt -> while ( boolexpr ) stmt
+assgstmt -> ID = arithexpr ;
+boolexpr -> arithexpr boolop arithexpr
+boolop -> < | > | <= | >= | ==
+arithexpr -> multexpr arithexprprime
+arithexprprime -> + multexpr arithexprprime | - multexpr arithexprprime | ε
+multexpr -> simpleexpr multexprprime
+multexprprime -> * simpleexpr multexprprime | / simpleexpr multexprprime | ε
+simpleexpr -> ID | NUM | ( arithexpr )
+)";
 
-    // ---------- 3. 构建文法 ----------
-    Grammar grammar(program);
+    builder.loadFromText(grammarText);
 
-    grammar.addProduction(program, {compoundstmt});
+    grammar.setStartSymbol(Symbol("program", SymbolType::NON_TERMINAL));
 
-    grammar.addProduction(compoundstmt, {LBRACE, stmts, RBRACE});
+    cout << "Grammar loaded.\n";
 
-    grammar.addProduction(stmts, {stmt, stmts});
-    grammar.addProduction(stmts, {}); // ε
+    /* ========= 2. 计算 FIRST / FOLLOW ========= */
 
-    grammar.addProduction(stmt, {assgstmt});
-    grammar.addProduction(stmt, {compoundstmt});
-
-    grammar.addProduction(assgstmt, {ID, ASSIGN, arithexpr, SEMI});
-
-    grammar.addProduction(arithexpr, {multexpr, arithexprprime});
-    grammar.addProduction(arithexprprime, {}); // ε
-
-    grammar.addProduction(multexpr, {simpleexpr, multexprprime});
-    grammar.addProduction(multexprprime, {}); // ε
-
-    grammar.addProduction(simpleexpr, {ID});
-    grammar.addProduction(simpleexpr, {NUM});
-
-    // ---------- 4. FIRST / FOLLOW ----------
     FirstFollowCalculator ff(grammar);
+
     ff.computeFirst();
     ff.computeFollow();
 
-    // ---------- 5. LL(1) 表 ----------
+    cout << "\nFIRST sets:\n";
+    for (const Symbol &nt : grammar.getNonTerminals())
+    {
+        cout << "FIRST(" << nt.name << ") = { ";
+        for (const Symbol &s : ff.getFirst(nt))
+            cout << s.name << " ";
+        cout << "}\n";
+    }
+
+    cout << "\nFOLLOW sets:\n";
+    for (const Symbol &nt : grammar.getNonTerminals())
+    {
+        cout << "FOLLOW(" << nt.name << ") = { ";
+        for (const Symbol &s : ff.getFollow(nt))
+            cout << s.name << " ";
+        cout << "}\n";
+    }
+
+    /* ========= 3. 构建 LL(1) 分析表 ========= */
+
     LL1Table table;
     table.build(grammar, ff);
 
     if (table.hasConflict())
     {
-        cout << "该文法不是 LL(1)" << endl;
+        cout << "\n⚠ 文法不是 LL(1)，存在冲突。\n";
         return;
     }
 
-    // ---------- 6. 构造输入 ----------
-    vector<Symbol> input = {
-        LBRACE,
-        ID, ASSIGN, NUM, SEMI,
-        RBRACE};
+    cout << "\nLL(1) table built successfully.\n";
 
-    // ---------- 7. 预测分析 ----------
+    /* ========= 4. 构造测试输入 ========= */
+    // 对应：{ ID = NUM ; }
+
+    vector<Symbol> input = {
+        Symbol("{", SymbolType::TERMINAL),
+        Symbol("ID", SymbolType::TERMINAL),
+        Symbol("=", SymbolType::TERMINAL),
+        Symbol("NUM", SymbolType::TERMINAL),
+        Symbol(";", SymbolType::TERMINAL),
+        Symbol("}", SymbolType::TERMINAL),
+        END_MARK};
+
+    /* ========= 5. 预测分析 ========= */
+
     LL1Parser parser(grammar, table);
+
+    cout << "\nStart parsing...\n";
     parser.parse(input);
 
-    cout << "分析成功" << endl;
-
-    /********* End *********/
+    cout << "\nParsing finished.\n";
 }
