@@ -103,6 +103,15 @@ public:
     const set<Symbol> &getTerminals() const;
     const set<Symbol> &getNonTerminals() const;
 
+    // 添加和获取增广文法
+    void augmentGrammar();
+    const Symbol &getAugmentedStart() const { return augmentedStartSymbol; }
+    int getAugmentedProductionIndex() const { return augmentedProductionIndex; }
+
+    // 获取符号，确保同名唯一
+    const Symbol &getTerminalByName(const string &name) const;
+    const Symbol &getNonTerminalByName(const string &name) const;
+
 private:
     Symbol startSymbol;
     vector<Production> productions;
@@ -110,6 +119,9 @@ private:
 
     set<Symbol> terminals;
     set<Symbol> nonTerminals;
+
+    Symbol augmentedStartSymbol;
+    int augmentedProductionIndex = -1;
 };
 
 // ========= GrammarBuilder =========
@@ -256,6 +268,16 @@ private:
     // —— 核心算法 ——
     ItemSet closure(const ItemSet &I);
     ItemSet gotoState(const ItemSet &I, const Symbol &X);
+
+    int findState(const ItemSet &S) const
+    {
+        for (int i = 0; i < (int)states.size(); ++i)
+        {
+            if (states[i] == S)
+                return i;
+        }
+        return -1;
+    }
 };
 
 // ========= Action =========
@@ -402,6 +424,52 @@ const set<Symbol> &Grammar::getTerminals() const
 const set<Symbol> &Grammar::getNonTerminals() const
 {
     return nonTerminals;
+}
+
+void Grammar::augmentGrammar()
+{
+    // 原始开始符号，例如 program
+    Symbol originalStart = startSymbol;
+
+    // 新开始符号 program'
+    augmentedStartSymbol =
+        Symbol(originalStart.name + "'", SymbolType::NON_TERMINAL);
+
+    // S' -> S
+    Production p;
+    p.left = augmentedStartSymbol;
+    p.right.push_back(originalStart);
+
+    // 插到 productions 的最前面（非常重要）
+    productions.insert(productions.begin(), p);
+
+    augmentedProductionIndex = 0;
+
+    // 更新非终结符集合
+    nonTerminals.insert(augmentedStartSymbol);
+
+    // 更新 startSymbol
+    startSymbol = augmentedStartSymbol;
+}
+
+const Symbol &Grammar::getTerminalByName(const string &name) const
+{
+    for (const Symbol &t : terminals)
+    {
+        if (t.name == name)
+            return t;
+    }
+    throw logic_error("Unknown terminal: " + name);
+}
+
+const Symbol &Grammar::getNonTerminalByName(const string &name) const
+{
+    for (const Symbol &nt : nonTerminals)
+    {
+        if (nt.name == name)
+            return nt;
+    }
+    throw logic_error("Unknown non-terminal: " + name);
 }
 #pragma endregion
 
@@ -716,10 +784,7 @@ InputProcessor::InputProcessor(const string &input, const Grammar &grammar)
         if (tok == "E")
             continue;
 
-        Symbol s(tok, SymbolType::TERMINAL);
-        if (!grammar.isTerminal(s))
-            throw logic_error("Unknown terminal: " + tok);
-
+        Symbol s = makeTerminal(tok, grammar);
         tokenStream.push_back({s, line});
     }
 
@@ -738,15 +803,10 @@ Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
         throw logic_error("EPSILON must not appear in input stream");
     }
 
-    Symbol s(token, SymbolType::TERMINAL);
-
-    if (!grammar.isTerminal(s))
-    {
-        throw logic_error("Unknown terminal in input: " + token);
-    }
-
+    const Symbol &s = grammar.getTerminalByName(token);
     return s;
 }
+
 #pragma endregion
 
 #pragma region LR0Automaton
@@ -815,65 +875,36 @@ void LR0Automaton::build()
     states.clear();
     gotoTable.clear();
 
-    /* ========= Step 1: 初始化起始状态 ========= */
-    // 使用文法的第 0 条产生式作为起始产生式
-    LRItem startItem(0, 0);
-    set<LRItem> initialItems;
-    initialItems.insert(startItem);
+    // 初始项目集：S' → · S
+    set<LRItem> startItems;
+    startItems.insert(LRItem(0, 0));
 
-    /* ========= Step 2: 计算起始状态的闭包 ========= */
-    ItemSet initialSet = closure(ItemSet(initialItems));
-    states.push_back(initialSet);
+    ItemSet I0 = closure(ItemSet(startItems));
+    states.push_back(I0);
 
-    /* ========= Step 3: 构造整个 LR(0) 自动机 ========= */
-    size_t stateIndex = 0;
-    while (stateIndex < states.size())
+    for (int i = 0; i < (int)states.size(); ++i)
     {
-        const ItemSet &currentState = states[stateIndex];
+        const ItemSet &I = states[i];
 
-        // 收集“点后可能出现的符号”
+        // 终结符 + 非终结符
         set<Symbol> symbols;
-        for (const LRItem &item : currentState.items)
-        {
-            const Production &p =
-                grammar.getProductions()[item.productionIndex];
+        symbols.insert(grammar.getTerminals().begin(), grammar.getTerminals().end());
+        symbols.insert(grammar.getNonTerminals().begin(), grammar.getNonTerminals().end());
 
-            if (item.dotPos < (int)p.right.size())
-            {
-                symbols.insert(p.right[item.dotPos]);
-            }
-        }
-
-        // 对每个符号计算 GOTO
-        for (const Symbol &symbol : symbols)
+        for (const Symbol &X : symbols)
         {
-            ItemSet nextState = gotoState(currentState, symbol);
-            if (nextState.items.empty())
+            ItemSet J = gotoState(I, X);
+            if (J.items.empty())
                 continue;
 
-            // 查找 nextState 是否已经存在
-            int nextIndex = -1;
-            for (size_t i = 0; i < states.size(); ++i)
+            int j = findState(J);
+            if (j == -1)
             {
-                if (states[i] == nextState)
-                {
-                    nextIndex = (int)i;
-                    break;
-                }
+                j = states.size();
+                states.push_back(J);
             }
-
-            // 如果是新状态，加入 states
-            if (nextIndex == -1)
-            {
-                nextIndex = (int)states.size();
-                states.push_back(nextState);
-            }
-
-            // 记录 GOTO 表
-            gotoTable[{(int)stateIndex, symbol}] = nextIndex;
+            gotoTable[{i, X}] = j;
         }
-
-        stateIndex++;
     }
 }
 
@@ -926,7 +957,7 @@ void SLRParsingTable::build(const Grammar &g, const LR0Automaton &automaton, con
             else
             {
                 // S' → S ·
-                if (p.left == g.getStartSymbol())
+                if (item.productionIndex == g.getAugmentedProductionIndex())
                 {
                     addAction(i, END_MARK, Action(ActionType::ACCEPT, -1));
                 }
@@ -975,6 +1006,7 @@ void SLRParsingTable::build(const Grammar &g, const LR0Automaton &automaton, con
     }
 #endif
 }
+
 void SLRParsingTable::addAction(int state, const Symbol &a, const Action &act)
 {
     auto key = make_pair(state, a);
@@ -1201,6 +1233,7 @@ simpleexpr -> ID | NUM | ( arithexpr )
     GrammarBuilder builder(grammar, terminals, grammarText);
 
     grammar.setStartSymbol(Symbol("program", SymbolType::NON_TERMINAL));
+    grammar.augmentGrammar();
 #ifdef DEBUG
     cout << "\n===== Grammar =====\n";
     cout << "Start symbol: " << grammar.getStartSymbol().name << "\n";
