@@ -209,8 +209,7 @@ public:
 
     bool operator==(const LRItem &other) const
     {
-        return productionIndex == other.productionIndex &&
-               dotPos == other.dotPos;
+        return productionIndex == other.productionIndex && dotPos == other.dotPos;
     }
 
     bool operator<(const LRItem &other) const
@@ -248,11 +247,7 @@ public:
 class LR0Automaton
 {
 public:
-    explicit LR0Automaton(const Grammar &g) : grammar(g)
-    {
-        states.clear();
-        gotoTable.clear();
-    }
+    explicit LR0Automaton(const Grammar &g) : grammar(g) {}
 
     void build(); // 构造整个项目集族
 
@@ -927,41 +922,50 @@ int LR0Automaton::getGoto(int state, const Symbol &X) const
 #pragma region SLRParsingTable
 void SLRParsingTable::build(const Grammar &g, const LR0Automaton &automaton, const FirstFollowCalculator &ff)
 {
+    actionTable.clear();
+    gotoTable.clear();
+    conflict = false;
+
     const auto &states = automaton.getStates();
     const auto &productions = g.getProductions();
 
+    /* =====================================================
+     * 1. 填 ACTION 表中的 SHIFT（完全基于 LR(0) GOTO）
+     *    若 goto(i, a) = j 且 a 是终结符
+     *    ⇒ ACTION[i, a] = shift j
+     * ===================================================== */
+    for (int i = 0; i < (int)states.size(); ++i)
+    {
+        for (const Symbol &a : g.getTerminals())
+        {
+            int j = automaton.getGoto(i, a);
+            if (j != -1)
+            {
+                addAction(i, a, Action(ActionType::SHIFT, j));
+            }
+        }
+    }
+
+    /* =====================================================
+     * 2. 填 ACTION 表中的 REDUCE / ACCEPT
+     * ===================================================== */
     for (int i = 0; i < (int)states.size(); ++i)
     {
         const ItemSet &I = states[i];
 
-        // ===== 1. 遍历项目，填 ACTION =====
         for (const LRItem &item : I.items)
         {
             const Production &p = productions[item.productionIndex];
 
-            // ---------- 情况 1：SHIFT ----------
-            if (item.dotPos < (int)p.right.size())
+            // ---------- 点在末尾 ----------
+            if (item.dotPos == (int)p.right.size())
             {
-                const Symbol &X = p.right[item.dotPos];
-
-                if (g.isTerminal(X))
-                {
-                    int j = automaton.getGoto(i, X);
-                    if (j != -1)
-                    {
-                        addAction(i, X, Action(ActionType::SHIFT, j));
-                    }
-                }
-            }
-            // ---------- 情况 2 / 3：REDUCE 或 ACCEPT ----------
-            else
-            {
-                // S' → S ·
+                // S' → S ·  ⇒ ACCEPT
                 if (item.productionIndex == g.getAugmentedProductionIndex())
                 {
                     addAction(i, END_MARK, Action(ActionType::ACCEPT, -1));
                 }
-                // A → α ·
+                // A → α ·  ⇒ 对 FOLLOW(A) 中的符号做 REDUCE
                 else
                 {
                     const Symbol &A = p.left;
@@ -969,13 +973,20 @@ void SLRParsingTable::build(const Grammar &g, const LR0Automaton &automaton, con
 
                     for (const Symbol &a : followA)
                     {
-                        addAction(i, a, Action(ActionType::REDUCE, item.productionIndex));
+                        addAction(i, a,
+                                  Action(ActionType::REDUCE,
+                                         item.productionIndex));
                     }
                 }
             }
         }
+    }
 
-        // ===== 2. 填 GOTO 表（非终结符）=====
+    /* =====================================================
+     * 3. 填 GOTO 表（非终结符）
+     * ===================================================== */
+    for (int i = 0; i < (int)states.size(); ++i)
+    {
         for (const Symbol &A : g.getNonTerminals())
         {
             int j = automaton.getGoto(i, A);
