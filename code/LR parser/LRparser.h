@@ -11,7 +11,7 @@
 #include <stack>
 #include <algorithm>
 using namespace std;
-#define DEBUG
+// #define DEBUG
 /* 不要修改这个标准输入函数 */
 void read_prog(string &prog)
 {
@@ -1157,14 +1157,14 @@ string SLRParser::sentenceToString(const vector<Symbol> &sentence) const
 
 void SLRParser::printRightmostDerivation() const
 {
-    // 使用原始开始符号，而不是增广文法 S'
-    Symbol originalStart = grammar.getAugmentedStart(); // S'
+    // 使用原始开始符号初始化
     vector<Symbol> sent;
     // 初始化为增广产生式右部，也就是原始开始符号
     const Production &augProd = grammar.getProductions()[grammar.getAugmentedProductionIndex()];
     sent = augProd.right;
 
-    cout << grammar.getStartSymbol().name << " =>\n";
+    string originalStartName = sent[0].name;
+    cout << originalStartName << " =>\n";
 
     // 逆序使用规约
     for (int i = (int)reduceSequence.size() - 1; i >= 0; --i)
@@ -1194,8 +1194,7 @@ void SLRParser::printRightmostDerivation() const
 
         if (i > 0)
         {
-            cout << sentenceToString(sent);
-            cout << " =>\n";
+            cout << sentenceToString(sent) << " =>\n";
         }
     }
     cout << sentenceToString(sent);
