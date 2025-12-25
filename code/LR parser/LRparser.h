@@ -1194,11 +1194,11 @@ void SLRParser::printRightmostDerivation() const
 
         if (i > 0)
         {
-            cout << "{ " << sentenceToString(sent) << "}";
+            cout << sentenceToString(sent);
             cout << " =>\n";
         }
     }
-    cout << "{ " << sentenceToString(sent) << "}";
+    cout << sentenceToString(sent);
 }
 
 #pragma endregion
