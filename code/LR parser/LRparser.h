@@ -1100,9 +1100,9 @@ void SLRParser::parse(const vector<Token> &input)
             int prodIdx = action.target;
             const Production &p = grammar.getProductions()[prodIdx];
 
-            int popCount = p.right.size();
+            // 空产生式不弹栈
+            int popCount = (p.right.size() == 1 && p.right[0] == EPSILON) ? 0 : (int)p.right.size();
 
-            // 弹出 RHS
             for (int i = 0; i < popCount; ++i)
             {
                 symbolStack.pop();
@@ -1111,6 +1111,12 @@ void SLRParser::parse(const vector<Token> &input)
 
             int topState = stateStack.top();
             int gotoState = parsingTable.getGoto(topState, p.left);
+
+            if (gotoState == -1)
+            {
+                cerr << "ERROR: Invalid GOTO after REDUCE for production " << prodIdx << endl;
+                exit(1);
+            }
 
             symbolStack.push(p.left);
             stateStack.push(gotoState);
