@@ -100,8 +100,8 @@ public:
     const vector<Production> &getProductionsOf(const Symbol &nt) const;
 
     // 判断符号类型
-    bool isTerminal(const Symbol &s) const { return terminals.count(s) > 0; }
-    bool isNonTerminal(const Symbol &s) const { return nonTerminals.count(s) > 0; }
+    bool isTerminal(const Symbol &s) const { return terminals.find(s) != terminals.end(); }
+    bool isNonTerminal(const Symbol &s) const { return nonTerminals.find(s) != nonTerminals.end(); }
 
     // 获取集合
     const set<Symbol> &getTerminals() const { return terminals; }
@@ -768,6 +768,7 @@ Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
 #pragma endregion
 
 #pragma region LR0Automaton
+// ================= closure =================
 ItemSet LR0Automaton::closure(const ItemSet &I)
 {
     ItemSet result = I;
@@ -778,34 +779,34 @@ ItemSet LR0Automaton::closure(const ItemSet &I)
     while (changed)
     {
         changed = false;
+        set<LRItem> newItems = result.items;
 
         for (const LRItem &item : result.items)
         {
             const Production &prod = productions[item.productionIndex];
 
-            // 点在末尾，无法扩展
-            if (item.dotPos >= prod.right.size())
-                continue;
+            if ((size_t)item.dotPos >= prod.right.size())
+                continue; // 点在末尾无法扩展
 
             Symbol B = prod.right[item.dotPos];
 
-            // 只对非终结符做 closure
             if (!grammar.isNonTerminal(B))
-                continue;
+                continue; // 只对非终结符做 closure
 
-            // 找所有 B → γ
-            for (int i = 0; i < productions.size(); i++)
+            // 对每个 B -> γ
+            for (size_t i = 0; i < productions.size(); ++i)
             {
                 if (productions[i].left == B)
                 {
-                    LRItem newItem(i, 0);
-                    if (result.items.insert(newItem).second)
+                    LRItem newItem{(int)i, 0};
+                    if (newItems.insert(newItem).second)
                     {
                         changed = true;
                     }
                 }
             }
         }
+        result.items = newItems;
     }
 
     return result;
@@ -818,14 +819,17 @@ ItemSet LR0Automaton::gotoState(const ItemSet &I, const Symbol &X)
     for (const LRItem &item : I.items)
     {
         const Production &p = grammar.getProductions()[item.productionIndex];
-        if (item.dotPos < (int)p.right.size() &&
-            p.right[item.dotPos] == X)
+        if (item.dotPos < (int)p.right.size() && p.right[item.dotPos] == X)
         {
-            J.items.insert(LRItem(item.productionIndex, item.dotPos + 1));
+            LRItem nextItem{item.productionIndex, item.dotPos + 1};
+            J.items.insert(nextItem);
         }
     }
-
-    return closure(J);
+    if (!J.items.empty())
+    {
+        J = closure(J);
+    }
+    return J;
 }
 
 void LR0Automaton::build()
@@ -833,28 +837,24 @@ void LR0Automaton::build()
     states.clear();
     gotoTable.clear();
 
-    // 初始项目集：S' → · S
+    // 初始状态 S' -> · S
     set<LRItem> startItems;
-    startItems.insert(LRItem(0, 0));
-
-    ItemSet I0 = closure(ItemSet(startItems));
+    startItems.insert(LRItem{0, 0});
+    ItemSet I0 = closure(ItemSet{startItems});
     states.push_back(I0);
 
     for (int i = 0; i < (int)states.size(); ++i)
     {
-        const ItemSet &I = states[i];
-
-        // 终结符 + 非终结符
+        const ItemSet I = states[i];
         set<Symbol> symbols;
-        symbols.insert(grammar.getTerminals().begin(), grammar.getTerminals().end());
         symbols.insert(grammar.getNonTerminals().begin(), grammar.getNonTerminals().end());
+        symbols.insert(grammar.getTerminals().begin(), grammar.getTerminals().end());
 
         for (const Symbol &X : symbols)
         {
             ItemSet J = gotoState(I, X);
             if (J.items.empty())
                 continue;
-
             int j = findState(J);
             if (j == -1)
             {
@@ -936,9 +936,7 @@ void SLRParsingTable::build(const Grammar &g, const LR0Automaton &automaton, con
 
                     for (const Symbol &a : followA)
                     {
-                        addAction(i, a,
-                                  Action(ActionType::REDUCE,
-                                         item.productionIndex));
+                        addAction(i, a, Action(ActionType::REDUCE, item.productionIndex));
                     }
                 }
             }
@@ -1213,7 +1211,7 @@ simpleexpr -> ID | NUM | ( arithexpr )
     cout << "Start symbol: " << grammar.getStartSymbol().name << "\n";
 
     const auto &prods = grammar.getProductions();
-    for (int i = 0; i < prods.size(); i++)
+    for (size_t i = 0; i < prods.size(); i++)
     {
         cout << i << ": " << prods[i].left.name << " -> ";
         for (auto &s : prods[i].right)
@@ -1274,20 +1272,20 @@ simpleexpr -> ID | NUM | ( arithexpr )
     cout << "\nLR(0) 自动机构造完成，共 " << automaton.getStates().size() << " 个状态\n";
     cout << "\n===== LR(0) States =====\n";
     const auto &states = automaton.getStates();
-    for (int i = 0; i < states.size(); i++)
+    for (size_t i = 0; i < states.size(); i++)
     {
         cout << "I" << i << ":\n";
         for (auto &item : states[i].items)
         {
             const auto &p = grammar.getProductions()[item.productionIndex];
             cout << "  " << p.left.name << " -> ";
-            for (int k = 0; k < p.right.size(); k++)
+            for (size_t k = 0; k < p.right.size(); k++)
             {
-                if (k == item.dotPos)
+                if (k == (size_t)item.dotPos)
                     cout << "· ";
                 cout << p.right[k].name << " ";
             }
-            if (item.dotPos == p.right.size())
+            if ((size_t)item.dotPos == p.right.size())
                 cout << "·";
             cout << "\n";
         }
@@ -1295,7 +1293,7 @@ simpleexpr -> ID | NUM | ( arithexpr )
     }
 
     cout << "\n===== LR(0) GOTO =====\n";
-    for (int i = 0; i < states.size(); i++)
+    for (size_t i = 0; i < states.size(); i++)
     {
         for (auto &s : grammar.getTerminals())
         {
