@@ -83,25 +83,29 @@ class Grammar
 public:
     // 构造
     Grammar() {};
-    Grammar(const Symbol &start);
+    Grammar(const Symbol &start) { nonTerminals.insert(start); }
 
-    void setStartSymbol(const Symbol &s);
-    Symbol getStartSymbol() const;
+    void setStartSymbol(const Symbol &s)
+    {
+        startSymbol = s;
+        nonTerminals.insert(s);
+    }
+    Symbol getStartSymbol() const { return startSymbol; }
 
     // 添加产生式 A → α
     void addProduction(const Symbol &left, const vector<Symbol> &right);
 
     // 查询
-    const vector<Production> &getProductions() const;
+    const vector<Production> &getProductions() const { return productions; }
     const vector<Production> &getProductionsOf(const Symbol &nt) const;
 
     // 判断符号类型
-    bool isTerminal(const Symbol &s) const;
-    bool isNonTerminal(const Symbol &s) const;
+    bool isTerminal(const Symbol &s) const { return terminals.count(s) > 0; }
+    bool isNonTerminal(const Symbol &s) const { return nonTerminals.count(s) > 0; }
 
     // 获取集合
-    const set<Symbol> &getTerminals() const;
-    const set<Symbol> &getNonTerminals() const;
+    const set<Symbol> &getTerminals() const { return terminals; }
+    const set<Symbol> &getNonTerminals() const { return nonTerminals; }
 
     // 添加和获取增广文法
     void augmentGrammar();
@@ -347,22 +351,6 @@ private:
 };
 
 #pragma region Grammar
-Grammar::Grammar(const Symbol &start) : startSymbol(start)
-{
-    nonTerminals.insert(start);
-}
-
-void Grammar::setStartSymbol(const Symbol &s)
-{
-    startSymbol = s;
-    nonTerminals.insert(s);
-}
-
-Symbol Grammar::getStartSymbol() const
-{
-    return startSymbol;
-}
-
 void Grammar::addProduction(const Symbol &left, const vector<Symbol> &right)
 {
     // 左部一定是非终结符
@@ -387,11 +375,6 @@ void Grammar::addProduction(const Symbol &left, const vector<Symbol> &right)
     }
 }
 
-const vector<Production> &Grammar::getProductions() const
-{
-    return productions;
-}
-
 const vector<Production> &Grammar::getProductionsOf(const Symbol &nt) const
 {
     static vector<Production> empty;
@@ -399,26 +382,6 @@ const vector<Production> &Grammar::getProductionsOf(const Symbol &nt) const
     if (it == prodMap.end())
         return empty;
     return it->second;
-}
-
-bool Grammar::isTerminal(const Symbol &s) const
-{
-    return terminals.count(s) > 0;
-}
-
-bool Grammar::isNonTerminal(const Symbol &s) const
-{
-    return nonTerminals.count(s) > 0;
-}
-
-const set<Symbol> &Grammar::getTerminals() const
-{
-    return terminals;
-}
-
-const set<Symbol> &Grammar::getNonTerminals() const
-{
-    return nonTerminals;
 }
 
 void Grammar::augmentGrammar()
