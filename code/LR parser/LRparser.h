@@ -768,7 +768,6 @@ Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
 #pragma endregion
 
 #pragma region LR0Automaton
-// ================= closure =================
 ItemSet LR0Automaton::closure(const ItemSet &I)
 {
     ItemSet result = I;
@@ -798,7 +797,12 @@ ItemSet LR0Automaton::closure(const ItemSet &I)
             {
                 if (productions[i].left == B)
                 {
-                    LRItem newItem{(int)i, 0};
+                    const Production &p = productions[i];
+
+                    // 如果是空产生式，dot 直接在末尾
+                    int dotPos = (p.right.size() == 1 && p.right[0] == EPSILON) ? 1 : 0;
+
+                    LRItem newItem{(int)i, dotPos};
                     if (newItems.insert(newItem).second)
                     {
                         changed = true;
@@ -814,6 +818,9 @@ ItemSet LR0Automaton::closure(const ItemSet &I)
 
 ItemSet LR0Automaton::gotoState(const ItemSet &I, const Symbol &X)
 {
+    if (X.type == SymbolType::EPSILON)
+        return ItemSet();
+
     ItemSet J;
 
     for (const LRItem &item : I.items)
@@ -825,10 +832,12 @@ ItemSet LR0Automaton::gotoState(const ItemSet &I, const Symbol &X)
             J.items.insert(nextItem);
         }
     }
+
     if (!J.items.empty())
     {
         J = closure(J);
     }
+
     return J;
 }
 
@@ -852,6 +861,8 @@ void LR0Automaton::build()
 
         for (const Symbol &X : symbols)
         {
+            if (X.type == SymbolType::EPSILON)
+                continue; // ⚠ 忽略 EPSILON
             ItemSet J = gotoState(I, X);
             if (J.items.empty())
                 continue;
@@ -1140,14 +1151,22 @@ string SLRParser::sentenceToString(const vector<Symbol> &sentence) const
 
 void SLRParser::printRightmostDerivation() const
 {
+    // 使用原始开始符号，而不是增广文法 S'
+    Symbol originalStart = grammar.getAugmentedStart(); // S'
     vector<Symbol> sent;
-    sent.push_back(grammar.getStartSymbol());
+    // 初始化为增广产生式右部，也就是原始开始符号
+    const Production &augProd = grammar.getProductions()[grammar.getAugmentedProductionIndex()];
+    sent = augProd.right;
 
-    cout << "program =>\n";
+    cout << grammar.getStartSymbol().name << " =>\n";
 
     // 逆序使用规约
     for (int i = (int)reduceSequence.size() - 1; i >= 0; --i)
     {
+        // 跳过增广文法规约
+        if (reduceSequence[i] == grammar.getAugmentedProductionIndex())
+            continue;
+
         const Production &p = grammar.getProductions()[reduceSequence[i]];
 
         // 从右往左找 p.left
@@ -1161,17 +1180,21 @@ void SLRParser::printRightmostDerivation() const
                 // 插入 α（若不是 ε）
                 if (!(p.right.size() == 1 && p.right[0] == EPSILON))
                 {
-                    sent.insert(sent.begin() + k,
-                                p.right.begin(),
-                                p.right.end());
+                    sent.insert(sent.begin() + k, p.right.begin(), p.right.end());
                 }
                 break;
             }
         }
 
-        cout << sentenceToString(sent) << "=>\n";
+        if (i > 0)
+        {
+            cout << "{ " << sentenceToString(sent) << "}";
+            cout << " =>\n";
+        }
     }
+    cout << "{ " << sentenceToString(sent) << "}";
 }
+
 #pragma endregion
 
 void Analysis()
