@@ -115,6 +115,7 @@ public:
     // 获取符号，确保同名唯一
     const Symbol &getTerminalByName(const string &name) const;
     const Symbol &getNonTerminalByName(const string &name) const;
+    const Symbol &getSymbol(const string &name) const;
 
 private:
     Symbol startSymbol;
@@ -348,6 +349,8 @@ private:
     void reportError(int line, const string &msg);
     void printRightmostDerivation() const;
     string sentenceToString(const vector<Symbol> &sentence) const;
+    Symbol findExpectedTerminal(int state) const;
+    void insertVirtualToken(const Symbol &sym, int line);
 };
 
 #pragma region Grammar
@@ -428,6 +431,21 @@ const Symbol &Grammar::getNonTerminalByName(const string &name) const
             return nt;
     }
     throw logic_error("Unknown non-terminal: " + name);
+}
+
+const Symbol &Grammar::getSymbol(const string &name) const
+{
+    for (const Symbol &t : terminals)
+    {
+        if (t.name == name)
+            return t;
+    }
+    for (const Symbol &nt : nonTerminals)
+    {
+        if (nt.name == name)
+            return nt;
+    }
+    throw logic_error("Unknown symbol: " + name);
 }
 #pragma endregion
 
@@ -1129,19 +1147,47 @@ void SLRParser::parse(const vector<Token> &input)
             printRightmostDerivation();
             return;
         }
-        // ===== ERROR（暂不处理）=====
+        // ===== ERROR =====
+        // ===== ERROR =====
         else
         {
-            reportError(tokens[pos].line, "SLR 错误");
-            // 实验此阶段不考虑错误处理，直接退出
-            return;
+            int state = stateStack.top();
+            int line = tokens[pos].line;
+
+            // 实验阶段：只处理“缺失”的情况
+            vector<string> candidates = {";", ")", "}"};
+            for (const string &name : candidates)
+            {
+                Symbol t = grammar.getSymbol(name);
+                const Action &act = parsingTable.getAction(state, t);
+
+                // 如果“假设补上这个终结符”可以继续分析
+                if (act.type == ActionType::SHIFT || act.type == ActionType::REDUCE)
+                {
+                    reportError(line, "缺少\"" + t.name + "\"");
+                    insertVirtualToken(t, line);
+
+#ifdef DEBUG
+                    cout << "[Recovery] insert virtual token: " << t.name << "\n";
+#endif
+                    break;
+                }
+            }
         }
     }
 }
 
+void SLRParser::insertVirtualToken(const Symbol &sym, int line)
+{
+    Token t;
+    t.symbol = sym;
+    t.line = line;
+    tokens.insert(tokens.begin() + pos, t);
+}
+
 void SLRParser::reportError(int line, const string &msg)
 {
-    cout << "语法错误,第" << line << "行," << msg << endl;
+    cout << "语法错误，第" << line << "行，" << msg << endl;
 }
 
 string SLRParser::sentenceToString(const vector<Symbol> &sentence) const
@@ -1164,7 +1210,7 @@ void SLRParser::printRightmostDerivation() const
     sent = augProd.right;
 
     string originalStartName = sent[0].name;
-    cout << originalStartName << " =>\n";
+    cout << originalStartName << " => \n";
 
     // 逆序使用规约
     for (int i = (int)reduceSequence.size() - 1; i >= 0; --i)
@@ -1194,12 +1240,22 @@ void SLRParser::printRightmostDerivation() const
 
         if (i > 0)
         {
-            cout << sentenceToString(sent) << " =>\n";
+            cout << sentenceToString(sent) << "=> \n";
         }
     }
     cout << sentenceToString(sent);
 }
 
+Symbol SLRParser::findExpectedTerminal(int state) const
+{
+    for (const Symbol &t : grammar.getTerminals())
+    {
+        const Action &a = parsingTable.getAction(state, t);
+        if (a.type != ActionType::ERROR)
+            return t;
+    }
+    return END_MARK;
+}
 #pragma endregion
 
 void Analysis()
