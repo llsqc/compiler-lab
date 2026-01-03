@@ -209,6 +209,7 @@ public:
     Symbol symbol;                    // 当前结点对应的文法符号
     string lexeme;                    // 词素（仅终结符有效）
     vector<ParseTreeNode *> children; // 子结点（从左到右）
+    Token *token = nullptr;           // 指向对应 token
 
     explicit ParseTreeNode(const Symbol &s) : symbol(s) {};
 
@@ -298,6 +299,7 @@ public:
         cout << "====== 语义分析结束 ======\n";
 #endif
     }
+    bool hasSemanticError = false;
 
 private:
     ParseTree *tree;
@@ -653,6 +655,7 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
         if (X == a)
         {
             node->lexeme = tokens[pos].lexeme;
+            node->token = &tokens[pos];
             pos++; // 正常匹配
         }
         else
@@ -1172,7 +1175,22 @@ ExprResult SemanticAnalyzer::handleMultiExprPrime(ExprResult inherited, ParseTre
 
     ValueType resType = (inherited.type == ValueType::REAL || right.type == ValueType::REAL) ? ValueType::REAL : ValueType::INT;
 
-    double val = (op == "*") ? inherited.value * right.value : inherited.value / right.value;
+    double val;
+    if (op == "*")
+    {
+        val = inherited.value * right.value;
+    }
+    else if (op == "/")
+    {
+        Token *opToken = node->children[0]->token;
+        if (right.value == 0)
+        {
+            cout << "error message:line " << opToken->line << ",division by zero\n";
+            right.value = 1;
+            hasSemanticError = true;
+        }
+        val = inherited.value / right.value;
+    }
 
     ExprResult combined{resType, val};
     return handleMultiExprPrime(combined, node->children[2]);
@@ -1204,6 +1222,7 @@ ExprResult SemanticAnalyzer::handleSimpleExpr(ParseTreeNode *node)
         return {ValueType::REAL, stod(node->lexeme)};
 
     semanticError("非法简单表达式: " + node->symbol.name);
+    return {ValueType::INT, -114514};
 }
 
 bool SemanticAnalyzer::evalBoolExpr(ParseTreeNode *node)
@@ -1234,6 +1253,7 @@ bool SemanticAnalyzer::evalBoolExpr(ParseTreeNode *node)
         return l.value != r.value;
 
     semanticError("未知布尔运算符: " + op);
+    return false;
 }
 
 void SemanticAnalyzer::semanticError(const string &msg)
@@ -1347,8 +1367,12 @@ simpleexpr -> ID | INTNUM | REALNUM | ( arithexpr )
 #ifdef DEBUG
     cout << "\n====== Program Result ======\n";
 #endif
-    for (const auto &p : symbolTable)
+    bool hasSemanticError = semantic.hasSemanticError || parser.hasSemanticError;
+    if (!hasSemanticError)
     {
-        cout << p.first << ": " << p.second.value << endl;
+        for (const auto &p : symbolTable)
+        {
+            cout << p.first << ": " << p.second.value << endl;
+        }
     }
 }
