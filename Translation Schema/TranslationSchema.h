@@ -10,7 +10,7 @@
 #include <set>
 #include <stack>
 using namespace std;
-#define DEBUG
+// #define DEBUG
 /* 不要修改这个标准输入函数 */
 void read_prog(string &prog)
 {
@@ -302,7 +302,6 @@ private:
     ParseTree *tree;
     map<string, SymbolEntry> &symtab;
 
-    /* ---------- 日志工具 ---------- */
 #ifdef DEBUG
     void logNode(ParseTreeNode *node, const string &stage)
     {
@@ -324,350 +323,21 @@ private:
     void logNode(ParseTreeNode *, const string &) {}
 #endif
 
-    /* ---------- 核心递归 ---------- */
-    void analyzeNode(ParseTreeNode *node)
-    {
-        if (!node)
-            return;
-
-        logNode(node, "analyzeNode");
-
-        const string &name = node->symbol.name;
-
-        if (name == "decl")
-            handleDecl(node);
-        else if (name == "assgstmt")
-            handleAssignStmt(node);
-        else if (name == "ifstmt")
-            handleIfStmt(node);
-        else if (name == "whilestmt")
-            handleWhileStmt(node);
-        else
-        {
-            // 默认：递归处理子结点
-            for (auto *child : node->children)
-                analyzeNode(child);
-        }
-    }
-
-    /* ---------- 语句 ---------- */
-
-    void handleAssignStmt(ParseTreeNode *node)
-    {
-        logNode(node, "handleAssignStmt");
-
-        ParseTreeNode *idNode = nullptr;
-        ParseTreeNode *exprNode = nullptr;
-
-        for (auto *c : node->children)
-        {
-            if (c->symbol.name == "ID")
-                idNode = c;
-            else if (c->symbol.name == "arithexpr")
-                exprNode = c;
-        }
-
-        if (!idNode || !exprNode)
-            semanticError("赋值语句结构不完整");
-
-        string var = idNode->lexeme;
-
-        if (!symtab.count(var))
-            semanticError("变量未声明: " + var);
-
-        ExprResult rhs = handleArithExpr(exprNode);
-        SymbolEntry &entry = symtab[var];
-
-        if (entry.type != rhs.type)
-        {
-            if (entry.type == ValueType::REAL && rhs.type == ValueType::INT)
-            {
-                entry.value = rhs.value;
-            }
-            else
-            {
-                semanticError("赋值类型不匹配: " + var);
-            }
-        }
-        else
-        {
-            entry.value = rhs.value;
-        }
-
-        entry.hasValue = true;
-    }
-
-    void handleIfStmt(ParseTreeNode *node)
-    {
-        logNode(node, "handleIfStmt");
-
-        ParseTreeNode *cond = nullptr;
-        ParseTreeNode *thenStmt = nullptr;
-        ParseTreeNode *elseStmt = nullptr;
-
-        for (auto *c : node->children)
-        {
-            if (c->symbol.name == "boolexpr")
-                cond = c;
-            else if (c->symbol.name == "stmt")
-            {
-                if (!thenStmt)
-                    thenStmt = c;
-                else
-                    elseStmt = c;
-            }
-        }
-
-        if (!cond || !thenStmt)
-            semanticError("if 语句结构错误");
-
-        bool condVal = evalBoolExpr(cond);
-        if (condVal)
-            analyzeNode(thenStmt);
-        else if (elseStmt)
-            analyzeNode(elseStmt);
-    }
-
-    void handleWhileStmt(ParseTreeNode *node)
-    {
-        logNode(node, "handleWhileStmt");
-
-        ParseTreeNode *cond = nullptr;
-        ParseTreeNode *body = nullptr;
-
-        for (auto *c : node->children)
-        {
-            if (c->symbol.name == "boolexpr")
-                cond = c;
-            else if (c->symbol.name == "stmt")
-                body = c;
-        }
-
-        if (!cond || !body)
-            semanticError("while 语句结构错误");
-
-        while (evalBoolExpr(cond))
-            analyzeNode(body);
-    }
-
-    void handleDecl(ParseTreeNode *node)
-    {
-        logNode(node, "handleDecl");
-
-        // decl → type ID = literal
-        ParseTreeNode *typeNode = nullptr;
-        ParseTreeNode *idNode = nullptr;
-        ParseTreeNode *valNode = nullptr;
-
-        for (auto *c : node->children)
-        {
-            if (c->symbol.name == "int" || c->symbol.name == "real")
-                typeNode = c;
-            else if (c->symbol.name == "ID")
-                idNode = c;
-            else if (c->symbol.name == "INTNUM" || c->symbol.name == "REALNUM")
-                valNode = c;
-        }
-
-        if (!typeNode || !idNode)
-            semanticError("声明语句结构错误");
-
-        string var = idNode->lexeme;
-
-        // ① 重复声明检查
-        if (symtab.count(var))
-            semanticError("重复声明变量: " + var);
-
-        // ② 类型
-        ValueType type =
-            (typeNode->symbol.name == "int")
-                ? ValueType::INT
-                : ValueType::REAL;
-
-        SymbolEntry entry;
-        entry.type = type;
-        entry.hasValue = false;
-
-        // ③ 初始化（如果有）
-        if (valNode)
-        {
-            if (valNode->symbol.name == "INTNUM")
-            {
-                entry.value = stod(valNode->lexeme);
-                entry.hasValue = true;
-            }
-            else if (valNode->symbol.name == "REALNUM")
-            {
-                entry.value = stod(valNode->lexeme);
-                entry.hasValue = true;
-            }
-        }
-
-        symtab[var] = entry;
-    }
-
-    /* ---------- 表达式 ---------- */
-
-    ExprResult handleArithExpr(ParseTreeNode *node)
-    {
-        logNode(node, "handleArithExpr");
-
-        // arithexpr → multexpr arithexprprime
-        ExprResult left = handleMultiExpr(node->children[0]);
-
-        // 只有一个 multexpr（无 + -）
-        if (node->children.size() == 1)
-            return left;
-
-        // arithexprprime
-        ParseTreeNode *prime = node->children[1];
-
-        // E
-        if (prime->children.size() == 1 &&
-            prime->children[0]->symbol.name == "E")
-            return left;
-
-        // + multexpr arithexprprime
-        string op = prime->children[0]->symbol.name;
-        ExprResult right = handleMultiExpr(prime->children[1]);
-
-        ValueType resType =
-            (left.type == ValueType::REAL || right.type == ValueType::REAL)
-                ? ValueType::REAL
-                : ValueType::INT;
-
-        double val = (op == "+")
-                         ? left.value + right.value
-                         : left.value - right.value;
-
-        ExprResult combined{resType, val};
-
-        // 递归处理后续 arithexprprime
-        if (prime->children.size() > 2)
-            return handleArithExprPrime(combined, prime->children[2]);
-
-        return combined;
-    }
-    ExprResult handleArithExprPrime(ExprResult inherited, ParseTreeNode *node)
-    {
-        logNode(node, "handleArithExprPrime");
-
-        // E
-        if (node->children.size() == 1 &&
-            node->children[0]->symbol.name == "E")
-            return inherited;
-
-        string op = node->children[0]->symbol.name;
-        ExprResult right = handleMultiExpr(node->children[1]);
-
-        ValueType resType =
-            (inherited.type == ValueType::REAL || right.type == ValueType::REAL)
-                ? ValueType::REAL
-                : ValueType::INT;
-
-        double val = (op == "+")
-                         ? inherited.value + right.value
-                         : inherited.value - right.value;
-
-        ExprResult combined{resType, val};
-        return handleArithExprPrime(combined, node->children[2]);
-    }
-    ExprResult handleMultiExpr(ParseTreeNode *node)
-    {
-        logNode(node, "handleMultiExpr");
-
-        // multexpr → simpleexpr multexprprime
-        ExprResult left = handleSimpleExpr(node->children[0]);
-
-        if (node->children.size() == 1)
-            return left;
-
-        return handleMultiExprPrime(left, node->children[1]);
-    }
-    ExprResult handleMultiExprPrime(ExprResult inherited, ParseTreeNode *node)
-    {
-        logNode(node, "handleMultiExprPrime");
-
-        // E
-        if (node->children.size() == 1 &&
-            node->children[0]->symbol.name == "E")
-            return inherited;
-
-        string op = node->children[0]->symbol.name;
-        ExprResult right = handleSimpleExpr(node->children[1]);
-
-        ValueType resType =
-            (inherited.type == ValueType::REAL || right.type == ValueType::REAL)
-                ? ValueType::REAL
-                : ValueType::INT;
-
-        double val = (op == "*")
-                         ? inherited.value * right.value
-                         : inherited.value / right.value;
-
-        ExprResult combined{resType, val};
-        return handleMultiExprPrime(combined, node->children[2]);
-    }
-    ExprResult handleSimpleExpr(ParseTreeNode *node)
-    {
-        logNode(node, "handleSimpleExpr");
-
-        // 只允许 simpleexpr 自身壳子
-        if (node->symbol.name == "simpleexpr" &&
-            node->children.size() == 1)
-            return handleSimpleExpr(node->children[0]);
-
-        // ID
-        if (node->symbol.name == "ID")
-        {
-            string var = node->lexeme;
-            if (!symtab.count(var))
-                semanticError("使用未声明变量: " + var);
-
-            SymbolEntry &e = symtab[var];
-            if (!e.hasValue)
-                semanticError("变量未初始化: " + var);
-
-            return {e.type, e.value};
-        }
-
-        if (node->symbol.name == "INTNUM")
-            return {ValueType::INT, stod(node->lexeme)};
-
-        if (node->symbol.name == "REALNUM")
-            return {ValueType::REAL, stod(node->lexeme)};
-
-        semanticError("非法简单表达式: " + node->symbol.name);
-    }
-
-    bool evalBoolExpr(ParseTreeNode *node)
-    {
-        logNode(node, "evalBoolExpr");
-
-        ExprResult l = handleArithExpr(node->children[0]);
-        ExprResult r = handleArithExpr(node->children[2]);
-
-        ParseTreeNode *opNode = node->children[1];
-
-        if (opNode->children.empty())
-            semanticError("布尔运算符结构错误");
-
-        string op = opNode->children[0]->symbol.name;
-
-        if (op == "<")
-            return l.value < r.value;
-        if (op == ">")
-            return l.value > r.value;
-        if (op == "==")
-            return l.value == r.value;
-
-        semanticError("未知布尔运算符: " + op);
-    }
-
-    [[noreturn]] void semanticError(const string &msg)
-    {
-        throw logic_error("[语义错误] " + msg);
-    }
+    void analyzeNode(ParseTreeNode *node);
+    void handleAssignStmt(ParseTreeNode *node);
+    void handleIfStmt(ParseTreeNode *node);
+    void handleWhileStmt(ParseTreeNode *node);
+    void handleDecl(ParseTreeNode *node);
+
+    ExprResult handleArithExpr(ParseTreeNode *node);
+    ExprResult handleArithExprPrime(ExprResult inherited, ParseTreeNode *node);
+    ExprResult handleMultiExpr(ParseTreeNode *node);
+    ExprResult handleMultiExprPrime(ExprResult inherited, ParseTreeNode *node);
+    ExprResult handleSimpleExpr(ParseTreeNode *node);
+
+    bool evalBoolExpr(ParseTreeNode *node);
+
+    [[noreturn]] void semanticError(const string &msg);
 };
 
 #pragma region Grammar
@@ -1234,6 +904,355 @@ void ParseTree::printNode(ParseTreeNode *node, int indent) const
 #pragma endregion
 
 #pragma region SemanticAnalyzer
+void SemanticAnalyzer::analyzeNode(ParseTreeNode *node)
+{
+    if (!node)
+        return;
+
+    logNode(node, "analyzeNode");
+
+    const string &name = node->symbol.name;
+
+    if (name == "decl")
+        handleDecl(node);
+    else if (name == "assgstmt")
+        handleAssignStmt(node);
+    else if (name == "ifstmt")
+        handleIfStmt(node);
+    else if (name == "whilestmt")
+        handleWhileStmt(node);
+    else
+    {
+        // 默认：递归处理子结点
+        for (auto *child : node->children)
+            analyzeNode(child);
+    }
+}
+
+/* ---------- 语句 ---------- */
+
+void SemanticAnalyzer::handleAssignStmt(ParseTreeNode *node)
+{
+    logNode(node, "handleAssignStmt");
+
+    ParseTreeNode *idNode = nullptr;
+    ParseTreeNode *exprNode = nullptr;
+
+    for (auto *c : node->children)
+    {
+        if (c->symbol.name == "ID")
+            idNode = c;
+        else if (c->symbol.name == "arithexpr")
+            exprNode = c;
+    }
+
+    if (!idNode || !exprNode)
+        semanticError("赋值语句结构不完整");
+
+    string var = idNode->lexeme;
+
+    if (!symtab.count(var))
+        semanticError("变量未声明: " + var);
+
+    ExprResult rhs = handleArithExpr(exprNode);
+    SymbolEntry &entry = symtab[var];
+
+    if (entry.type != rhs.type)
+    {
+        if (entry.type == ValueType::REAL && rhs.type == ValueType::INT)
+        {
+            entry.value = rhs.value;
+        }
+        else
+        {
+            semanticError("赋值类型不匹配: " + var);
+        }
+    }
+    else
+    {
+        entry.value = rhs.value;
+    }
+
+    entry.hasValue = true;
+}
+
+void SemanticAnalyzer::handleIfStmt(ParseTreeNode *node)
+{
+    logNode(node, "handleIfStmt");
+
+    ParseTreeNode *cond = nullptr;
+    ParseTreeNode *thenStmt = nullptr;
+    ParseTreeNode *elseStmt = nullptr;
+
+    for (auto *c : node->children)
+    {
+        if (c->symbol.name == "boolexpr")
+            cond = c;
+        else if (c->symbol.name == "stmt")
+        {
+            if (!thenStmt)
+                thenStmt = c;
+            else
+                elseStmt = c;
+        }
+    }
+
+    if (!cond || !thenStmt)
+        semanticError("if 语句结构错误");
+
+    bool condVal = evalBoolExpr(cond);
+    if (condVal)
+        analyzeNode(thenStmt);
+    else if (elseStmt)
+        analyzeNode(elseStmt);
+}
+
+void SemanticAnalyzer::handleWhileStmt(ParseTreeNode *node)
+{
+    logNode(node, "handleWhileStmt");
+
+    ParseTreeNode *cond = nullptr;
+    ParseTreeNode *body = nullptr;
+
+    for (auto *c : node->children)
+    {
+        if (c->symbol.name == "boolexpr")
+            cond = c;
+        else if (c->symbol.name == "stmt")
+            body = c;
+    }
+
+    if (!cond || !body)
+        semanticError("while 语句结构错误");
+
+    while (evalBoolExpr(cond))
+        analyzeNode(body);
+}
+
+void SemanticAnalyzer::handleDecl(ParseTreeNode *node)
+{
+    logNode(node, "handleDecl");
+
+    // decl → type ID = literal
+    ParseTreeNode *typeNode = nullptr;
+    ParseTreeNode *idNode = nullptr;
+    ParseTreeNode *valNode = nullptr;
+
+    for (auto *c : node->children)
+    {
+        if (c->symbol.name == "int" || c->symbol.name == "real")
+            typeNode = c;
+        else if (c->symbol.name == "ID")
+            idNode = c;
+        else if (c->symbol.name == "INTNUM" || c->symbol.name == "REALNUM")
+            valNode = c;
+    }
+
+    if (!typeNode || !idNode)
+        semanticError("声明语句结构错误");
+
+    string var = idNode->lexeme;
+
+    // ① 重复声明检查
+    if (symtab.count(var))
+        semanticError("重复声明变量: " + var);
+
+    // ② 类型
+    ValueType type =
+        (typeNode->symbol.name == "int")
+            ? ValueType::INT
+            : ValueType::REAL;
+
+    SymbolEntry entry;
+    entry.type = type;
+    entry.hasValue = false;
+
+    // ③ 初始化（如果有）
+    if (valNode)
+    {
+        if (valNode->symbol.name == "INTNUM")
+        {
+            entry.value = stod(valNode->lexeme);
+            entry.hasValue = true;
+        }
+        else if (valNode->symbol.name == "REALNUM")
+        {
+            entry.value = stod(valNode->lexeme);
+            entry.hasValue = true;
+        }
+    }
+
+    symtab[var] = entry;
+}
+
+/* ---------- 表达式 ---------- */
+
+ExprResult SemanticAnalyzer::handleArithExpr(ParseTreeNode *node)
+{
+    logNode(node, "handleArithExpr");
+
+    // arithexpr → multexpr arithexprprime
+    ExprResult left = handleMultiExpr(node->children[0]);
+
+    // 只有一个 multexpr（无 + -）
+    if (node->children.size() == 1)
+        return left;
+
+    // arithexprprime
+    ParseTreeNode *prime = node->children[1];
+
+    // E
+    if (prime->children.size() == 1 &&
+        prime->children[0]->symbol.name == "E")
+        return left;
+
+    // + multexpr arithexprprime
+    string op = prime->children[0]->symbol.name;
+    ExprResult right = handleMultiExpr(prime->children[1]);
+
+    ValueType resType =
+        (left.type == ValueType::REAL || right.type == ValueType::REAL)
+            ? ValueType::REAL
+            : ValueType::INT;
+
+    double val = (op == "+")
+                     ? left.value + right.value
+                     : left.value - right.value;
+
+    ExprResult combined{resType, val};
+
+    // 递归处理后续 arithexprprime
+    if (prime->children.size() > 2)
+        return handleArithExprPrime(combined, prime->children[2]);
+
+    return combined;
+}
+ExprResult SemanticAnalyzer::handleArithExprPrime(ExprResult inherited, ParseTreeNode *node)
+{
+    logNode(node, "handleArithExprPrime");
+
+    // E
+    if (node->children.size() == 1 &&
+        node->children[0]->symbol.name == "E")
+        return inherited;
+
+    string op = node->children[0]->symbol.name;
+    ExprResult right = handleMultiExpr(node->children[1]);
+
+    ValueType resType =
+        (inherited.type == ValueType::REAL || right.type == ValueType::REAL)
+            ? ValueType::REAL
+            : ValueType::INT;
+
+    double val = (op == "+")
+                     ? inherited.value + right.value
+                     : inherited.value - right.value;
+
+    ExprResult combined{resType, val};
+    return handleArithExprPrime(combined, node->children[2]);
+}
+ExprResult SemanticAnalyzer::handleMultiExpr(ParseTreeNode *node)
+{
+    logNode(node, "handleMultiExpr");
+
+    // multexpr → simpleexpr multexprprime
+    ExprResult left = handleSimpleExpr(node->children[0]);
+
+    if (node->children.size() == 1)
+        return left;
+
+    return handleMultiExprPrime(left, node->children[1]);
+}
+ExprResult SemanticAnalyzer::handleMultiExprPrime(ExprResult inherited, ParseTreeNode *node)
+{
+    logNode(node, "handleMultiExprPrime");
+
+    // E
+    if (node->children.size() == 1 &&
+        node->children[0]->symbol.name == "E")
+        return inherited;
+
+    string op = node->children[0]->symbol.name;
+    ExprResult right = handleSimpleExpr(node->children[1]);
+
+    ValueType resType =
+        (inherited.type == ValueType::REAL || right.type == ValueType::REAL)
+            ? ValueType::REAL
+            : ValueType::INT;
+
+    double val = (op == "*")
+                     ? inherited.value * right.value
+                     : inherited.value / right.value;
+
+    ExprResult combined{resType, val};
+    return handleMultiExprPrime(combined, node->children[2]);
+}
+ExprResult SemanticAnalyzer::handleSimpleExpr(ParseTreeNode *node)
+{
+    logNode(node, "handleSimpleExpr");
+
+    // 只允许 simpleexpr 自身壳子
+    if (node->symbol.name == "simpleexpr" &&
+        node->children.size() == 1)
+        return handleSimpleExpr(node->children[0]);
+
+    // ID
+    if (node->symbol.name == "ID")
+    {
+        string var = node->lexeme;
+        if (!symtab.count(var))
+            semanticError("使用未声明变量: " + var);
+
+        SymbolEntry &e = symtab[var];
+        if (!e.hasValue)
+            semanticError("变量未初始化: " + var);
+
+        return {e.type, e.value};
+    }
+
+    if (node->symbol.name == "INTNUM")
+        return {ValueType::INT, stod(node->lexeme)};
+
+    if (node->symbol.name == "REALNUM")
+        return {ValueType::REAL, stod(node->lexeme)};
+
+    semanticError("非法简单表达式: " + node->symbol.name);
+}
+
+bool SemanticAnalyzer::evalBoolExpr(ParseTreeNode *node)
+{
+    logNode(node, "evalBoolExpr");
+
+    ExprResult l = handleArithExpr(node->children[0]);
+    ExprResult r = handleArithExpr(node->children[2]);
+
+    ParseTreeNode *opNode = node->children[1];
+
+    if (opNode->children.empty())
+        semanticError("布尔运算符结构错误");
+
+    string op = opNode->children[0]->symbol.name;
+
+    if (op == "<")
+        return l.value < r.value;
+    if (op == "<=")
+        return l.value <= r.value;
+    if (op == ">")
+        return l.value > r.value;
+    if (op == ">=")
+        return l.value >= r.value;
+    if (op == "==")
+        return l.value == r.value;
+    if (op == "!=")
+        return l.value != r.value;
+
+    semanticError("未知布尔运算符: " + op);
+}
+
+[[noreturn]] void SemanticAnalyzer::semanticError(const string &msg)
+{
+    throw logic_error("[语义错误] " + msg);
+}
 #pragma endregion
 
 void Analysis()
@@ -1338,9 +1357,11 @@ simpleexpr -> ID | INTNUM | REALNUM | ( arithexpr )
     semantic.analyze();
 
     /* ========= 7. 输出最终结果 ========= */
+#ifdef DEBUG
     cout << "\n====== Program Result ======\n";
+#endif
     for (const auto &p : symbolTable)
     {
-        cout << p.first << " = " << p.second.value << endl;
+        cout << p.first << ": " << p.second.value << endl;
     }
 }
