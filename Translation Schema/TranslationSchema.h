@@ -241,6 +241,7 @@ public:
 
     void parse(const vector<Token> &input);
     ParseTree *getParseTree() const { return parseTree; }
+    bool hasSemanticError = false;
 
 private:
     const Grammar &grammar;
@@ -337,7 +338,7 @@ private:
 
     bool evalBoolExpr(ParseTreeNode *node);
 
-    [[noreturn]] void semanticError(const string &msg);
+    void semanticError(const string &msg);
 };
 
 #pragma region Grammar
@@ -631,6 +632,20 @@ ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
     Symbol a = tokens[pos].symbol;
     int line = tokens[pos].line;
     ParseTreeNode *node = new ParseTreeNode(X);
+
+    if (X.name == "decl" && a.name == "int" && pos + 3 < tokens.size())
+    {
+        Token &valToken = tokens[pos + 3]; // 对应 = 后的值
+        if (valToken.symbol.name == "REALNUM")
+        {
+            // 自动改 token
+            tokens[pos].symbol = Symbol("real", SymbolType::TERMINAL);
+            tokens[pos].lexeme = "real";
+            cout << "error message:line " << line << ",realnum can not be translated into int type\n";
+            a = tokens[pos].symbol; // 更新当前 token
+            hasSemanticError = true;
+        }
+    }
 
     // ① 终结符 or $
     if (X.type == SymbolType::TERMINAL || X.type == SymbolType::END)
@@ -1221,7 +1236,7 @@ bool SemanticAnalyzer::evalBoolExpr(ParseTreeNode *node)
     semanticError("未知布尔运算符: " + op);
 }
 
-[[noreturn]] void SemanticAnalyzer::semanticError(const string &msg)
+void SemanticAnalyzer::semanticError(const string &msg)
 {
     throw logic_error("[语义错误] " + msg);
 }
