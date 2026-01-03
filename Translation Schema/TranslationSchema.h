@@ -10,8 +10,7 @@
 #include <set>
 #include <stack>
 using namespace std;
-#define DEBUG
-#undef DEBUG
+// #define DEBUG
 /* 不要修改这个标准输入函数 */
 void read_prog(string &prog)
 {
@@ -180,7 +179,8 @@ private:
 
 struct Token
 {
-    Symbol symbol;
+    Symbol symbol; // 终结符类型：ID / INTNUM / REALNUM / +
+    string lexeme; // 原始字符串：a / 123 / 3.14
     int line;
 };
 
@@ -264,12 +264,11 @@ enum class ValueType
 struct ExprResult
 {
     ValueType type;
-    double value; // 统一用 double，int 时也存进来
+    double value;
     bool hasValue;
 
     ExprResult() : type(ValueType::INT), value(0), hasValue(false) {}
-    ExprResult(ValueType t, double v)
-        : type(t), value(v), hasValue(true) {}
+    ExprResult(ValueType t, double v) : type(t), value(v), hasValue(true) {}
 };
 
 struct SymbolEntry
@@ -277,6 +276,9 @@ struct SymbolEntry
     ValueType type;
     double value;
     bool hasValue;
+
+    SymbolEntry() : type(ValueType::INT), value(0), hasValue(false) {}
+    SymbolEntry(ValueType t, double v, bool hv) : type(t), value(v), hasValue(hv) {}
 };
 
 class SemanticAnalyzer
@@ -289,23 +291,37 @@ private:
     ParseTree *tree;
     map<string, SymbolEntry> &symtab;
 
-    /* ===== 核心递归 ===== */
     void analyzeNode(ParseTreeNode *node);
 
-    /* ===== 语句处理 ===== */
     void handleAssignStmt(ParseTreeNode *node);
     void handleIfStmt(ParseTreeNode *node);
     void handleWhileStmt(ParseTreeNode *node);
+    void handleDecls(ParseTreeNode *node);
+    void handleDecl(ParseTreeNode *node);
 
-    /* ===== 表达式 ===== */
     ExprResult handleArithExpr(ParseTreeNode *node);
     ExprResult handleMultiExpr(ParseTreeNode *node);
     ExprResult handleSimpleExpr(ParseTreeNode *node);
 
     bool evalBoolExpr(ParseTreeNode *node);
 
-    /* ===== 错误 ===== */
     [[noreturn]] void semanticError(const string &msg);
+    static ParseTreeNode *findChild(ParseTreeNode *node, const string &name)
+    {
+        for (auto c : node->children)
+            if (c->symbol.name == name)
+                return c;
+        return nullptr;
+    }
+
+    static vector<ParseTreeNode *> findChildren(ParseTreeNode *node, const string &name)
+    {
+        vector<ParseTreeNode *> res;
+        for (auto c : node->children)
+            if (c->symbol.name == name)
+                res.push_back(c);
+        return res;
+    }
 };
 
 #pragma region Grammar
@@ -585,12 +601,13 @@ void LL1Parser::parse(const vector<Token> &input)
     pos = 0;
     ParseTreeNode *root = parseSymbol(grammar.getStartSymbol());
     parseTree = new ParseTree(root);
-
+#ifdef DEBUG
     if (tokens[pos].symbol != END_MARK)
     {
         reportError(0, "输入未完全匹配");
     }
     parseTree->print();
+#endif
 }
 
 ParseTreeNode *LL1Parser::parseSymbol(const Symbol &X)
@@ -774,10 +791,10 @@ vector<string> GrammarBuilder::split(const string &s, char delim)
 #pragma region InputProcessor
 InputProcessor::InputProcessor(const string &input, const Grammar &grammar)
 {
-    string token;
-    int line = 0;
+    int line = 1;
+    size_t i = 0;
 
-    for (size_t i = 0; i < input.size();)
+    while (i < input.size())
     {
         if (input[i] == '\n')
         {
@@ -792,24 +809,45 @@ InputProcessor::InputProcessor(const string &input, const Grammar &grammar)
             continue;
         }
 
-        // 读一个 token
+        // 读一个 token（以空格分隔）
         string tok;
         while (i < input.size() && !isspace(input[i]))
         {
             tok += input[i++];
         }
 
-        if (tok == "E")
-            continue;
+        // ===== 1. 关键字 & 符号 =====
+        static set<string> keywords = {
+            "int", "real", "if", "then", "else", "while",
+            "{", "}", "(", ")", ";",
+            "+", "-", "*", "/",
+            "=", "<", "<=", "==", ">", ">="};
 
-        Symbol s(tok, SymbolType::TERMINAL);
-        if (!grammar.isTerminal(s))
-            throw logic_error("Unknown terminal: " + tok);
-
-        tokenStream.push_back({s, line});
+        if (keywords.count(tok))
+        {
+            tokenStream.push_back({Symbol(tok, SymbolType::TERMINAL), tok, line});
+        }
+        // ===== 2. 数字 =====
+        else if (isdigit(tok[0]))
+        {
+            if (tok.find('.') != string::npos)
+            {
+                tokenStream.push_back({Symbol("REALNUM", SymbolType::TERMINAL), tok, line}); // REALNUM
+            }
+            else
+            {
+                tokenStream.push_back({Symbol("INTNUM", SymbolType::TERMINAL), tok, line}); // INTNUM
+            }
+        }
+        // ===== 3. 标识符 =====
+        else
+        {
+            tokenStream.push_back({Symbol("ID", SymbolType::TERMINAL), tok, line}); // ID
+        }
     }
 
-    tokenStream.push_back({END_MARK, line});
+    // 结束符 $
+    tokenStream.push_back({END_MARK, "$", line});
 }
 
 Symbol InputProcessor::makeTerminal(const string &token, const Grammar &grammar)
@@ -858,14 +896,22 @@ void SemanticAnalyzer::analyzeNode(ParseTreeNode *node)
 
     if (name == "program")
     {
-        analyzeNode(node->children[0]);
+        // program → decls compoundstmt
+        handleDecls(node->children[0]);
+        analyzeNode(node->children[1]);
+    }
+    else if (name == "decls")
+    {
+        handleDecls(node);
     }
     else if (name == "compoundstmt")
     {
-        analyzeNode(node->children[1]); // stmts
+        // { stmts }
+        analyzeNode(node->children[1]);
     }
     else if (name == "stmts")
     {
+        // stmt stmts | E
         if (node->children.size() == 2)
         {
             analyzeNode(node->children[0]);
@@ -886,18 +932,55 @@ void SemanticAnalyzer::analyzeNode(ParseTreeNode *node)
     }
 }
 
+void SemanticAnalyzer::handleDecls(ParseTreeNode *node)
+{
+    // decls → decl ; decls | E
+    if (node->children.empty())
+        return;
+
+    handleDecl(node->children[0]);
+    handleDecls(node->children[2]);
+}
+
+void SemanticAnalyzer::handleDecl(ParseTreeNode *node)
+{
+    // decl → int ID = INTNUM
+    // decl → real ID = REALNUM
+
+    string typeName = node->children[0]->symbol.name;
+    string varName = node->children[1]->children[0]->symbol.name;
+    string literal = node->children[3]->children[0]->symbol.name;
+
+    if (symtab.count(varName))
+        semanticError("variable redeclared: " + varName);
+
+    if (typeName == "int")
+    {
+        if (literal.find('.') != string::npos)
+            semanticError("realnum can not be translated into int type");
+
+        int v = stoi(literal);
+        symtab[varName] = SymbolEntry(ValueType::INT, v, true);
+    }
+    else if (typeName == "real")
+    {
+        double v = stod(literal);
+        symtab[varName] = SymbolEntry(ValueType::REAL, v, true);
+    }
+}
+
 void SemanticAnalyzer::handleAssignStmt(ParseTreeNode *node)
 {
     string varName = node->children[0]->children[0]->symbol.name;
 
     if (!symtab.count(varName))
-        semanticError("变量未声明: " + varName);
+        semanticError("variable not declared: " + varName);
 
     ExprResult rhs = handleArithExpr(node->children[2]);
     SymbolEntry &entry = symtab[varName];
 
-    if (entry.type != rhs.type)
-        semanticError("类型不匹配，不能赋值");
+    if (entry.type == ValueType::INT && rhs.type == ValueType::REAL)
+        semanticError("realnum can not be translated into int type");
 
     entry.value = rhs.value;
     entry.hasValue = true;
@@ -908,9 +991,9 @@ void SemanticAnalyzer::handleIfStmt(ParseTreeNode *node)
     bool cond = evalBoolExpr(node->children[2]);
 
     if (cond)
-        analyzeNode(node->children[5]);
+        analyzeNode(node->children[5]); // then stmt
     else
-        analyzeNode(node->children[7]);
+        analyzeNode(node->children[7]); // else stmt
 }
 
 void SemanticAnalyzer::handleWhileStmt(ParseTreeNode *node)
@@ -939,14 +1022,14 @@ bool SemanticAnalyzer::evalBoolExpr(ParseTreeNode *node)
     if (op == "==")
         return lhs.value == rhs.value;
 
-    semanticError("未知布尔运算符");
+    semanticError("unknown bool operator");
 }
 
 ExprResult SemanticAnalyzer::handleArithExpr(ParseTreeNode *node)
 {
     ExprResult left = handleMultiExpr(node->children[0]);
-
     ParseTreeNode *prime = node->children[1];
+
     while (!prime->children.empty())
     {
         string op = prime->children[0]->symbol.name;
@@ -957,16 +1040,19 @@ ExprResult SemanticAnalyzer::handleArithExpr(ParseTreeNode *node)
         else
             left.value -= right.value;
 
+        if (left.type == ValueType::INT && right.type == ValueType::REAL)
+            left.type = ValueType::REAL;
+
         prime = prime->children[2];
     }
-
     return left;
 }
+
 ExprResult SemanticAnalyzer::handleMultiExpr(ParseTreeNode *node)
 {
     ExprResult left = handleSimpleExpr(node->children[0]);
-
     ParseTreeNode *prime = node->children[1];
+
     while (!prime->children.empty())
     {
         string op = prime->children[0]->symbol.name;
@@ -977,11 +1063,14 @@ ExprResult SemanticAnalyzer::handleMultiExpr(ParseTreeNode *node)
         else
             left.value /= right.value;
 
+        if (left.type == ValueType::INT && right.type == ValueType::REAL)
+            left.type = ValueType::REAL;
+
         prime = prime->children[2];
     }
-
     return left;
 }
+
 ExprResult SemanticAnalyzer::handleSimpleExpr(ParseTreeNode *node)
 {
     ParseTreeNode *child = node->children[0];
@@ -991,27 +1080,28 @@ ExprResult SemanticAnalyzer::handleSimpleExpr(ParseTreeNode *node)
         string name = child->children[0]->symbol.name;
 
         if (!symtab.count(name))
-            semanticError("变量未声明: " + name);
+            semanticError("variable not declared: " + name);
 
         SymbolEntry &e = symtab[name];
         if (!e.hasValue)
-            semanticError("变量未初始化: " + name);
+            semanticError("variable not initialized: " + name);
 
         return ExprResult(e.type, e.value);
     }
 
-    if (child->symbol.name == "NUM")
-    {
-        double v = stod(child->children[0]->symbol.name);
-        return ExprResult(ValueType::INT, v);
-    }
+    if (child->symbol.name == "INTNUM")
+        return ExprResult(ValueType::INT, stod(child->children[0]->symbol.name));
+
+    if (child->symbol.name == "REALNUM")
+        return ExprResult(ValueType::REAL, stod(child->children[0]->symbol.name));
 
     // ( arithexpr )
     return handleArithExpr(child->children[1]);
 }
+
 [[noreturn]] void SemanticAnalyzer::semanticError(const string &msg)
 {
-    cerr << "Semantic error: " << msg << endl;
+    cerr << "error message:" << msg << endl;
     exit(1);
 }
 #pragma endregion
@@ -1038,8 +1128,9 @@ simpleexpr -> ID | INTNUM | REALNUM | ( arithexpr )
 )";
 
     vector<string> terminals = {
+        "int", "real",
         "if", "then", "else", "while",
-        "ID", "NUM",
+        "ID", "INTNUM", "REALNUM",
         "{", "}", "(", ")", ";",
         "+", "-", "*", "/",
         "=", "<", "<=", "==", ">", ">="};
@@ -1112,17 +1203,8 @@ simpleexpr -> ID | INTNUM | REALNUM | ( arithexpr )
     /* ========= 6. 语义分析 ========= */
 
     ParseTree *tree = parser.getParseTree();
-
-    // ② 准备符号表（您已经写好的）
     map<string, SymbolEntry> symbolTable;
-
-    // ⚠️ 如果有声明语句阶段，这一步可以提前填
-    // 这里假设声明已完成或由语义分析处理
-
-    // ③ 语义分析器
     SemanticAnalyzer semantic(tree, symbolTable);
-
-    // ④ 执行语义分析（真正“跑程序”）
     semantic.analyze();
 
     /* ========= 7. 输出最终结果 ========= */
