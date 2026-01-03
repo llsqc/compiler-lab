@@ -923,7 +923,6 @@ void SemanticAnalyzer::analyzeNode(ParseTreeNode *node)
         handleWhileStmt(node);
     else
     {
-        // 默认：递归处理子结点
         for (auto *child : node->children)
             analyzeNode(child);
     }
@@ -1033,7 +1032,6 @@ void SemanticAnalyzer::handleDecl(ParseTreeNode *node)
 {
     logNode(node, "handleDecl");
 
-    // decl → type ID = literal
     ParseTreeNode *typeNode = nullptr;
     ParseTreeNode *idNode = nullptr;
     ParseTreeNode *valNode = nullptr;
@@ -1053,21 +1051,15 @@ void SemanticAnalyzer::handleDecl(ParseTreeNode *node)
 
     string var = idNode->lexeme;
 
-    // ① 重复声明检查
     if (symtab.count(var))
         semanticError("重复声明变量: " + var);
 
-    // ② 类型
-    ValueType type =
-        (typeNode->symbol.name == "int")
-            ? ValueType::INT
-            : ValueType::REAL;
+    ValueType type = (typeNode->symbol.name == "int") ? ValueType::INT : ValueType::REAL;
 
     SymbolEntry entry;
     entry.type = type;
     entry.hasValue = false;
 
-    // ③ 初始化（如果有）
     if (valNode)
     {
         if (valNode->symbol.name == "INTNUM")
@@ -1110,14 +1102,9 @@ ExprResult SemanticAnalyzer::handleArithExpr(ParseTreeNode *node)
     string op = prime->children[0]->symbol.name;
     ExprResult right = handleMultiExpr(prime->children[1]);
 
-    ValueType resType =
-        (left.type == ValueType::REAL || right.type == ValueType::REAL)
-            ? ValueType::REAL
-            : ValueType::INT;
+    ValueType resType = (left.type == ValueType::REAL || right.type == ValueType::REAL) ? ValueType::REAL : ValueType::INT;
 
-    double val = (op == "+")
-                     ? left.value + right.value
-                     : left.value - right.value;
+    double val = (op == "+") ? left.value + right.value : left.value - right.value;
 
     ExprResult combined{resType, val};
 
@@ -1132,21 +1119,15 @@ ExprResult SemanticAnalyzer::handleArithExprPrime(ExprResult inherited, ParseTre
     logNode(node, "handleArithExprPrime");
 
     // E
-    if (node->children.size() == 1 &&
-        node->children[0]->symbol.name == "E")
+    if (node->children.size() == 1 && node->children[0]->symbol.name == "E")
         return inherited;
 
     string op = node->children[0]->symbol.name;
     ExprResult right = handleMultiExpr(node->children[1]);
 
-    ValueType resType =
-        (inherited.type == ValueType::REAL || right.type == ValueType::REAL)
-            ? ValueType::REAL
-            : ValueType::INT;
+    ValueType resType = (inherited.type == ValueType::REAL || right.type == ValueType::REAL) ? ValueType::REAL : ValueType::INT;
 
-    double val = (op == "+")
-                     ? inherited.value + right.value
-                     : inherited.value - right.value;
+    double val = (op == "+") ? inherited.value + right.value : inherited.value - right.value;
 
     ExprResult combined{resType, val};
     return handleArithExprPrime(combined, node->children[2]);
@@ -1168,21 +1149,15 @@ ExprResult SemanticAnalyzer::handleMultiExprPrime(ExprResult inherited, ParseTre
     logNode(node, "handleMultiExprPrime");
 
     // E
-    if (node->children.size() == 1 &&
-        node->children[0]->symbol.name == "E")
+    if (node->children.size() == 1 && node->children[0]->symbol.name == "E")
         return inherited;
 
     string op = node->children[0]->symbol.name;
     ExprResult right = handleSimpleExpr(node->children[1]);
 
-    ValueType resType =
-        (inherited.type == ValueType::REAL || right.type == ValueType::REAL)
-            ? ValueType::REAL
-            : ValueType::INT;
+    ValueType resType = (inherited.type == ValueType::REAL || right.type == ValueType::REAL) ? ValueType::REAL : ValueType::INT;
 
-    double val = (op == "*")
-                     ? inherited.value * right.value
-                     : inherited.value / right.value;
+    double val = (op == "*") ? inherited.value * right.value : inherited.value / right.value;
 
     ExprResult combined{resType, val};
     return handleMultiExprPrime(combined, node->children[2]);
@@ -1191,12 +1166,9 @@ ExprResult SemanticAnalyzer::handleSimpleExpr(ParseTreeNode *node)
 {
     logNode(node, "handleSimpleExpr");
 
-    // 只允许 simpleexpr 自身壳子
-    if (node->symbol.name == "simpleexpr" &&
-        node->children.size() == 1)
+    if (node->symbol.name == "simpleexpr" && node->children.size() == 1)
         return handleSimpleExpr(node->children[0]);
 
-    // ID
     if (node->symbol.name == "ID")
     {
         string var = node->lexeme;
