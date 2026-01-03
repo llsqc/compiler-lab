@@ -43,15 +43,9 @@ struct Symbol
     Symbol() : name(""), type(SymbolType::TERMINAL) {};
     Symbol(const string &n, SymbolType t) : name(n), type(t) {}
 
-    bool operator==(const Symbol &other) const
-    {
-        return name == other.name && type == other.type;
-    }
+    bool operator==(const Symbol &other) const { return name == other.name && type == other.type; }
 
-    bool operator!=(const Symbol &other) const
-    {
-        return !(*this == other);
-    }
+    bool operator!=(const Symbol &other) const { return !(*this == other); }
 
     bool operator<(const Symbol &other) const
     {
@@ -245,6 +239,7 @@ public:
     LL1Parser(const Grammar &g, const LL1Table &table) : grammar(g), ll1Table(table), pos(0), parseTree(nullptr) {}
 
     void parse(const vector<Token> &input);
+    ParseTree *getParseTree() const { return parseTree; }
 
 private:
     const Grammar &grammar;
@@ -258,6 +253,59 @@ private:
     ParseTreeNode *parseSymbol(const Symbol &X);
 
     void reportError(int line, const string &msg);
+};
+
+enum class ValueType
+{
+    INT,
+    REAL
+};
+
+struct ExprResult
+{
+    ValueType type;
+    double value; // 统一用 double，int 时也存进来
+    bool hasValue;
+
+    ExprResult() : type(ValueType::INT), value(0), hasValue(false) {}
+    ExprResult(ValueType t, double v)
+        : type(t), value(v), hasValue(true) {}
+};
+
+struct SymbolEntry
+{
+    ValueType type;
+    double value;
+    bool hasValue;
+};
+
+class SemanticAnalyzer
+{
+public:
+    SemanticAnalyzer(ParseTree *tree, map<string, SymbolEntry> &symtab) : tree(tree), symtab(symtab) {}
+    void analyze() { analyzeNode(tree->getRoot()); }
+
+private:
+    ParseTree *tree;
+    map<string, SymbolEntry> &symtab;
+
+    /* ===== 核心递归 ===== */
+    void analyzeNode(ParseTreeNode *node);
+
+    /* ===== 语句处理 ===== */
+    void handleAssignStmt(ParseTreeNode *node);
+    void handleIfStmt(ParseTreeNode *node);
+    void handleWhileStmt(ParseTreeNode *node);
+
+    /* ===== 表达式 ===== */
+    ExprResult handleArithExpr(ParseTreeNode *node);
+    ExprResult handleMultiExpr(ParseTreeNode *node);
+    ExprResult handleSimpleExpr(ParseTreeNode *node);
+
+    bool evalBoolExpr(ParseTreeNode *node);
+
+    /* ===== 错误 ===== */
+    [[noreturn]] void semanticError(const string &msg);
 };
 
 #pragma region Grammar
@@ -800,16 +848,185 @@ void ParseTree::printNode(ParseTreeNode *node, int indent) const
 }
 #pragma endregion
 
+#pragma region SemanticAnalyzer
+void SemanticAnalyzer::analyzeNode(ParseTreeNode *node)
+{
+    if (!node)
+        return;
+
+    const string &name = node->symbol.name;
+
+    if (name == "program")
+    {
+        analyzeNode(node->children[0]);
+    }
+    else if (name == "compoundstmt")
+    {
+        analyzeNode(node->children[1]); // stmts
+    }
+    else if (name == "stmts")
+    {
+        if (node->children.size() == 2)
+        {
+            analyzeNode(node->children[0]);
+            analyzeNode(node->children[1]);
+        }
+    }
+    else if (name == "assgstmt")
+    {
+        handleAssignStmt(node);
+    }
+    else if (name == "ifstmt")
+    {
+        handleIfStmt(node);
+    }
+    else if (name == "whilestmt")
+    {
+        handleWhileStmt(node);
+    }
+}
+
+void SemanticAnalyzer::handleAssignStmt(ParseTreeNode *node)
+{
+    string varName = node->children[0]->children[0]->symbol.name;
+
+    if (!symtab.count(varName))
+        semanticError("变量未声明: " + varName);
+
+    ExprResult rhs = handleArithExpr(node->children[2]);
+    SymbolEntry &entry = symtab[varName];
+
+    if (entry.type != rhs.type)
+        semanticError("类型不匹配，不能赋值");
+
+    entry.value = rhs.value;
+    entry.hasValue = true;
+}
+
+void SemanticAnalyzer::handleIfStmt(ParseTreeNode *node)
+{
+    bool cond = evalBoolExpr(node->children[2]);
+
+    if (cond)
+        analyzeNode(node->children[5]);
+    else
+        analyzeNode(node->children[7]);
+}
+
+void SemanticAnalyzer::handleWhileStmt(ParseTreeNode *node)
+{
+    while (evalBoolExpr(node->children[2]))
+    {
+        analyzeNode(node->children[4]);
+    }
+}
+
+bool SemanticAnalyzer::evalBoolExpr(ParseTreeNode *node)
+{
+    ExprResult lhs = handleArithExpr(node->children[0]);
+    ExprResult rhs = handleArithExpr(node->children[2]);
+
+    string op = node->children[1]->children[0]->symbol.name;
+
+    if (op == "<")
+        return lhs.value < rhs.value;
+    if (op == ">")
+        return lhs.value > rhs.value;
+    if (op == "<=")
+        return lhs.value <= rhs.value;
+    if (op == ">=")
+        return lhs.value >= rhs.value;
+    if (op == "==")
+        return lhs.value == rhs.value;
+
+    semanticError("未知布尔运算符");
+}
+
+ExprResult SemanticAnalyzer::handleArithExpr(ParseTreeNode *node)
+{
+    ExprResult left = handleMultiExpr(node->children[0]);
+
+    ParseTreeNode *prime = node->children[1];
+    while (!prime->children.empty())
+    {
+        string op = prime->children[0]->symbol.name;
+        ExprResult right = handleMultiExpr(prime->children[1]);
+
+        if (op == "+")
+            left.value += right.value;
+        else
+            left.value -= right.value;
+
+        prime = prime->children[2];
+    }
+
+    return left;
+}
+ExprResult SemanticAnalyzer::handleMultiExpr(ParseTreeNode *node)
+{
+    ExprResult left = handleSimpleExpr(node->children[0]);
+
+    ParseTreeNode *prime = node->children[1];
+    while (!prime->children.empty())
+    {
+        string op = prime->children[0]->symbol.name;
+        ExprResult right = handleSimpleExpr(prime->children[1]);
+
+        if (op == "*")
+            left.value *= right.value;
+        else
+            left.value /= right.value;
+
+        prime = prime->children[2];
+    }
+
+    return left;
+}
+ExprResult SemanticAnalyzer::handleSimpleExpr(ParseTreeNode *node)
+{
+    ParseTreeNode *child = node->children[0];
+
+    if (child->symbol.name == "ID")
+    {
+        string name = child->children[0]->symbol.name;
+
+        if (!symtab.count(name))
+            semanticError("变量未声明: " + name);
+
+        SymbolEntry &e = symtab[name];
+        if (!e.hasValue)
+            semanticError("变量未初始化: " + name);
+
+        return ExprResult(e.type, e.value);
+    }
+
+    if (child->symbol.name == "NUM")
+    {
+        double v = stod(child->children[0]->symbol.name);
+        return ExprResult(ValueType::INT, v);
+    }
+
+    // ( arithexpr )
+    return handleArithExpr(child->children[1]);
+}
+[[noreturn]] void SemanticAnalyzer::semanticError(const string &msg)
+{
+    cerr << "Semantic error: " << msg << endl;
+    exit(1);
+}
+#pragma endregion
+
 void Analysis()
 {
     /* ========= 1. 构建文法 ========= */
     string grammarText = R"(
-program -> compoundstmt
-stmt -> ifstmt | whilestmt | assgstmt | compoundstmt
+program -> decls compoundstmt
+decls -> decl ; decls | E
+decl -> int ID = INTNUM | real ID = REALNUM
+stmt -> ifstmt | assgstmt | compoundstmt
 compoundstmt -> { stmts }
 stmts -> stmt stmts | E
 ifstmt -> if ( boolexpr ) then stmt else stmt
-whilestmt -> while ( boolexpr ) stmt
 assgstmt -> ID = arithexpr ;
 boolexpr -> arithexpr boolop arithexpr
 boolop -> < | > | <= | >= | ==
@@ -817,7 +1034,7 @@ arithexpr -> multexpr arithexprprime
 arithexprprime -> + multexpr arithexprprime | - multexpr arithexprprime | E
 multexpr -> simpleexpr multexprprime
 multexprprime -> * simpleexpr multexprprime | / simpleexpr multexprprime | E
-simpleexpr -> ID | NUM | ( arithexpr )
+simpleexpr -> ID | INTNUM | REALNUM | ( arithexpr )
 )";
 
     vector<string> terminals = {
@@ -891,4 +1108,27 @@ simpleexpr -> ID | NUM | ( arithexpr )
 #ifdef DEBUG
     cout << "\nParsing finished.\n";
 #endif
+
+    /* ========= 6. 语义分析 ========= */
+
+    ParseTree *tree = parser.getParseTree();
+
+    // ② 准备符号表（您已经写好的）
+    map<string, SymbolEntry> symbolTable;
+
+    // ⚠️ 如果有声明语句阶段，这一步可以提前填
+    // 这里假设声明已完成或由语义分析处理
+
+    // ③ 语义分析器
+    SemanticAnalyzer semantic(tree, symbolTable);
+
+    // ④ 执行语义分析（真正“跑程序”）
+    semantic.analyze();
+
+    /* ========= 7. 输出最终结果 ========= */
+    cout << "\n====== Program Result ======\n";
+    for (const auto &p : symbolTable)
+    {
+        cout << p.first << " = " << p.second.value << endl;
+    }
 }
